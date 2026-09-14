@@ -128,19 +128,6 @@ public class SalaryStructureService {
         return aStartsBeforeOrOnBEnd && bStartsBeforeOrOnAEnd;
     }
 
-    /**
-     * The future Payroll Engine's coverage rule: does this structure cover
-     * a payroll period [periodStart, periodEnd] in full? Exposed as a
-     * static helper so it can be unit-tested now without implementing
-     * payroll calculation itself (out of Phase 6 scope).
-     */
-    static boolean covers(SalaryStructure structure, LocalDate periodStart, LocalDate periodEnd) {
-        boolean startsOnOrBeforePeriodStart = !structure.getEffectiveFrom().isAfter(periodStart);
-        boolean endsOnOrAfterPeriodEnd =
-                structure.getEffectiveTo() == null || !structure.getEffectiveTo().isBefore(periodEnd);
-        return startsOnOrBeforePeriodStart && endsOnOrAfterPeriodEnd;
-    }
-
     private Employee findEmployeeOrThrow(Long id) {
         return employeeRepository.findById(id)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Employee not found"));

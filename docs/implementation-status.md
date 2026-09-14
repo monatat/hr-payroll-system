@@ -912,5 +912,68 @@ Status: **Complete.**
   no TypeScript errors. All manual-test database records were re-queried after the automated test runs and
   confirmed unchanged.
 
-## Phases 8–13
+## Phase 8 — Payroll processing and employee payslips
+Status: **In progress.**
+
+### Phase 8A-2 — Payroll schema foundation, entities, calculator, repositories
+Status: **Complete.** Backend-only schema/domain foundation -- no orchestration service, no controller/API, no
+audit events, no exception mapping, no concurrency handling, no PDF generation, and no frontend change. Manually
+triggered monthly runs only; payroll remains salary-based with no attendance/leave/overtime/timesheet dependency.
+
+- **`V13__add_payroll_rate_snapshot.sql`** -- additive only, V1-V12 untouched. Adds `epf_rate_snapshot`,
+  `socso_rate_snapshot`, `eis_rate_snapshot`, `income_tax_rate_snapshot` (`NUMERIC(5,4)`, each `NOT NULL DEFAULT`
+  the fixed demo rate below) and `version BIGINT NOT NULL DEFAULT 0` to `payroll_runs`. Rate snapshots live on
+  `payroll_runs`, not `payslips` -- every payslip in a run shares that run's one rate snapshot via its existing FK,
+  so nothing is duplicated per payslip. New CHECK constraints: `chk_payroll_runs_period_year_range`
+  (`period_year BETWEEN 2000 AND 2100`), one range check per rate column (`0-1` inclusive), and
+  `chk_payroll_runs_rate_snapshot_sum` (the four rates combined `<= 1`). Defaults are kept permanently, matching
+  the V10/V12 convention. `payroll_runs` was empty before and after this migration -- nothing to backfill; no
+  `triggered_by_user_id` column was added (an existing `audit_logs.actor_id`, once Phase 8B adds audit events,
+  remains the authoritative "who triggered this," matching every other domain's convention).
+- **Demonstration rates (fixed, flat, explicitly non-compliant):** EPF 11.00%, SOCSO 0.50%, EIS 0.20%, income tax
+  5.00% -- educational-only figures, not legally accurate Malaysian statutory calculations.
+- **Deductions apply to gross pay** (`basePay + housingAllowance + transportAllowance`), an approved demonstration
+  policy. Each deduction is rounded independently (`grossPay.multiply(rate)`, `HALF_UP`, scale 2) immediately after
+  its own multiplication; `totalDeductions` is the sum of the four already-rounded deductions, never gross pay
+  times one combined rate; `netPay = grossPay - totalDeductions`, defensively rejected if negative.
+- **`SalaryPeriodCoverage`** (new, `salary` package) -- a public, pure, Spring/JPA-free utility exposing the
+  full-period coverage rule (`effectiveFrom <= periodStart AND (effectiveTo IS NULL OR effectiveTo >= periodEnd)`,
+  no proration/combination across multiple structures) that previously lived as a package-private method on
+  `SalaryStructureService`. `SalaryStructureService` no longer carries its own copy of this algorithm (the unused,
+  untested `covers(SalaryStructure, ...)` overload was removed rather than kept as a dead wrapper).
+  `SalaryCoverageAlgorithmTest` was refactored to exercise the utility directly with raw dates, preserving every
+  original scenario and adding explicit null-rejection tests.
+- New `com.hrpayroll.backend.payroll` package: `PayrollRunStatus` (`PROCESSING`/`CALCULATED`/`COMPLETED`/`FAILED`),
+  `PdfStatus` (`PENDING`/`GENERATED`/`FAILED`), `PayrollRateSnapshot` (immutable rate value object, validates each
+  rate in `[0,1]` and their sum `<= 1`, constructed from `BigDecimal` string literals only, never `double`),
+  `PayrollCalculationResult` (immutable calculation output, all ten fields normalized to scale 2), `PayrollCalculator`
+  (pure static calculator, no Spring/JPA/clock/filesystem/database dependency), `PayrollRun` and `Payslip` JPA
+  entities mapping V8+V13 exactly (enums stored as strings, `PayrollRun.version` mapped `@Version`, no lifecycle
+  mutation methods on either entity -- run orchestration is explicitly Phase 8B's scope, not this one), and
+  `PayrollRunRepository`/`PayslipRepository` (month/year lookup, existence check, a `findByIdForUpdate`
+  `PESSIMISTIC_WRITE` lock mirroring `EmployeeRepository`'s for the future retry path, and fetch-joined
+  paginated/by-id lookups for `Payslip` mirroring `LeaveRequestRepository`'s shape -- no implicit ordering
+  hardcoded into any method name).
+- **Locked lifecycle semantics documented but not implemented here** (Phase 8B's scope): a run is created
+  `PROCESSING`; successful calculation ends at `CALCULATED`; `COMPLETED` is reserved until every payslip's PDF is
+  generated (Phase 8C); a calculation failure leaves zero payslips and records `FAILED` through a separate
+  committed transaction (never the same rolled-back one); retry reuses the same `FAILED` row, since the period
+  unique constraint prevents a replacement row ever being inserted for that period.
+- Backend: 46 new/changed tests (242 total, up from 196) -- `SalaryCoverageAlgorithmTest` grew from 6 to 10 (all
+  original scenarios preserved, now against `SalaryPeriodCoverage` directly, plus 4 new null-rejection cases), 21
+  new in `PayrollCalculatorTest` (the worked example, gross-pay sum, one rounding-boundary test per deduction,
+  proof that deductions are summed after independent rounding rather than from one combined rate, exact net-pay
+  subtraction, zero-allowance and zero-rate cases, every null/negative/out-of-range/combined-rate rejection, a
+  defensive negative-net-pay rejection, and scale-2 normalization of every result field), 13 new in
+  `PayrollRunConstraintTest` (raw-SQL: V13 defaults plus `version = 0` on an insert omitting those columns, both
+  year-range boundaries, every individual rate's both boundaries, the combined-rate-sum boundary rejected and
+  accepted), 5 new in `PayrollRunRepositoryTest`, and 3 new in `PayslipRepositoryTest` (JPA entity/repository
+  round-trip mapping and the fetch-joined paginated lookups -- the only layer available to test against with no
+  service/controller yet). `./mvnw.cmd clean verify` passes (242/242, 0 failures, 0 errors); Flyway reports schema
+  version 13. Frontend was not touched and its test suite was not re-run in this sub-phase.
+- **Explicitly unimplemented, deferred to later sub-phases:** payroll-run orchestration service, create/retry/list/
+  detail HTTP endpoints and DTOs, audit events, exception-handler/constraint-code mapping, concurrency handling,
+  PDF generation (Apache PDFBox), and every frontend page/route/sidebar change.
+
+## Phases 9–13
 Status: Not started.
