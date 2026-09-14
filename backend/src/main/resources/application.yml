@@ -1,0 +1,62 @@
+server:
+  port: ${SERVER_PORT:8080}
+  error:
+    include-stacktrace: never
+    include-message: never
+    include-binding-errors: never
+
+spring:
+  application:
+    name: hr-payroll-backend
+
+  datasource:
+    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5433}/${DB_NAME:hr_payroll}
+    username: ${DB_USERNAME:hr_payroll_app}
+    password: ${DB_PASSWORD:changeme_local_only}
+
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: validate
+    properties:
+      hibernate:
+        format_sql: true
+
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+
+  jackson:
+    time-zone: Asia/Kuala_Lumpur
+
+  mvc:
+    problemdetails:
+      enabled: true
+
+logging:
+  level:
+    root: INFO
+    org.flywaydb: INFO
+    # PostgreSQL's own duplicate-key error message includes the offending
+    # value (e.g. an IC number or department name) verbatim, and Hibernate
+    # logs that raw JDBC exception message at ERROR by default. The
+    # exception itself is still handled correctly (see ApiExceptionHandler,
+    # which maps it to a clean 409) -- this only stops it from also being
+    # printed to the application log, per the project-wide "never log
+    # sensitive values" rule.
+    org.hibernate.engine.jdbc.spi.SqlExceptionHelper: OFF
+
+app:
+  jwt:
+    # No default value on purpose: the app must fail fast at startup rather
+    # than silently sign tokens with a known/guessable secret. Set via the
+    # JWT_SECRET environment variable (see .env.example).
+    secret: ${JWT_SECRET:}
+    expiration-minutes: ${JWT_EXPIRATION_MINUTES:30}
+    issuer: hr-payroll-backend
+  bootstrap-admin:
+    # Both unset by default -> bootstrap is skipped. See .env.example.
+    email: ${BOOTSTRAP_ADMIN_EMAIL:}
+    password: ${BOOTSTRAP_ADMIN_PASSWORD:}
+  cors:
+    allowed-origin: ${CORS_ALLOWED_ORIGIN:http://localhost:5173}

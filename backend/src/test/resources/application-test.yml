@@ -1,0 +1,9 @@
+# Test-only overrides layered on top of src/main/resources/application.yml.
+# Bootstrap admin stays unset here (global default) so ordinary tests don't
+# get a surprise admin row; BootstrapAdminRunnerTest exercises that logic
+# directly against mocks instead of the full Spring context.
+app:
+  jwt:
+    secret: "phase4-integration-test-jwt-signing-secret-do-not-use-in-production"
+    expiration-minutes: 30
+    issuer: hr-payroll-backend

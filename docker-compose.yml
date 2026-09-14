@@ -1,0 +1,25 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: hr_payroll_postgres
+    environment:
+      POSTGRES_DB: ${DB_NAME:-hr_payroll}
+      POSTGRES_USER: ${DB_USERNAME:-hr_payroll_app}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-changeme_local_only}
+      # Keeps DEFAULT now() timestamps aligned with the application's fixed
+      # Asia/Kuala_Lumpur timezone (see backend TIMESTAMP columns, which are
+      # deliberately timezone-naive -- no UTC conversion is introduced).
+      TZ: Asia/Kuala_Lumpur
+      PGTZ: Asia/Kuala_Lumpur
+    ports:
+      - "${DB_PORT:-5433}:5432"
+    volumes:
+      - hr_payroll_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USERNAME:-hr_payroll_app} -d ${DB_NAME:-hr_payroll}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  hr_payroll_pgdata:
