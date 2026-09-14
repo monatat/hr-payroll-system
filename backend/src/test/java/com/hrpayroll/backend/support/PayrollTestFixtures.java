@@ -42,6 +42,14 @@ public final class PayrollTestFixtures {
     public static final int CANDIDATE_TEST_PERIOD_YEAR_MIN = 2000;
     public static final int CANDIDATE_TEST_PERIOD_YEAR_MAX = 2005;
 
+    /**
+     * Reserved for Phase 8B-2A controller/query tests. Same isolation guarantee as
+     * CANDIDATE_TEST_PERIOD_YEAR -- no existing employee qualifies as a candidate for this year --
+     * kept as its own constant (rather than reusing 2000-2005) purely so this sub-phase's tests are
+     * unambiguous to read, not because sharing the earlier band would be unsafe.
+     */
+    public static final int CONTROLLER_TEST_PERIOD_YEAR = 2006;
+
     private PayrollTestFixtures() {
     }
 
@@ -94,6 +102,53 @@ public final class PayrollTestFixtures {
     }
 
     /**
+     * Raw-SQL payslip insert, bypassing PayrollRunTransactionService entirely -- needed so a
+     * controller test can verify list/pagination/ordering/serialization behavior against a known
+     * payslip without needing genuine candidate/coverage data for every scenario. Uses the
+     * "Phase8 Test..." snapshot values directly and always PdfStatus PENDING with a null path,
+     * matching what the real workflow always produces in this sub-phase.
+     */
+    public static long insertPayslip(
+            JdbcTemplate jdbc,
+            long payrollRunId,
+            long employeeId,
+            String employeeCodeSnapshot,
+            BigDecimal basePay,
+            BigDecimal housingAllowance,
+            BigDecimal transportAllowance,
+            BigDecimal grossPay,
+            BigDecimal epfDeduction,
+            BigDecimal socsoDeduction,
+            BigDecimal eisDeduction,
+            BigDecimal incomeTax,
+            BigDecimal totalDeductions,
+            BigDecimal netPay) {
+        return jdbc.queryForObject(
+                "INSERT INTO payslips "
+                        + "(payroll_run_id, employee_id, employee_code_snapshot, employee_name_snapshot, "
+                        + "department_name_snapshot, job_title_snapshot, base_pay, housing_allowance, "
+                        + "transport_allowance, gross_pay, epf_deduction, socso_deduction, eis_deduction, "
+                        + "income_tax, total_deductions, net_pay, pdf_path, pdf_status) "
+                        + "VALUES (?, ?, ?, 'Phase8 Test Employee', ?, 'Engineer', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 'PENDING') "
+                        + "RETURNING id",
+                Long.class,
+                payrollRunId,
+                employeeId,
+                employeeCodeSnapshot,
+                DEPARTMENT_NAME,
+                basePay,
+                housingAllowance,
+                transportAllowance,
+                grossPay,
+                epfDeduction,
+                socsoDeduction,
+                eisDeduction,
+                incomeTax,
+                totalDeductions,
+                netPay);
+    }
+
+    /**
      * Raw-SQL salary structure insert, bypassing SalaryStructureService entirely -- needed so a test
      * can deliberately create overlapping/ambiguous coverage that the service's own overlap check
      * would otherwise reject.
@@ -131,6 +186,29 @@ public final class PayrollTestFixtures {
                 periodYear,
                 periodStart,
                 periodEnd);
+    }
+
+    /**
+     * Inserts a payroll_runs row with an explicit status and created_at/updated_at -- used to prove
+     * the createdAt-DESC/id-DESC deterministic tiebreaker when two rows share an identical
+     * created_at. Bypasses PayrollRunService entirely, so the returned id must be passed to
+     * {@link #cleanup(JdbcTemplate, Collection)}.
+     */
+    public static long insertPayrollRunWithCreatedAt(
+            JdbcTemplate jdbc, int periodMonth, int periodYear, String status, java.time.LocalDateTime createdAt) {
+        LocalDate periodStart = LocalDate.of(periodYear, periodMonth, 1);
+        LocalDate periodEnd = periodStart.withDayOfMonth(periodStart.lengthOfMonth());
+        return jdbc.queryForObject(
+                "INSERT INTO payroll_runs (period_month, period_year, period_start, period_end, status, created_at, updated_at) "
+                        + "VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING id",
+                Long.class,
+                periodMonth,
+                periodYear,
+                periodStart,
+                periodEnd,
+                status,
+                createdAt,
+                createdAt);
     }
 
     /**

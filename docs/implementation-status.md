@@ -1090,5 +1090,73 @@ no frontend change. No new migration.
   endpoints, payslip list/detail/self-service endpoints, PDF generation (Apache PDFBox), the
   `COMPLETED` transition, and every frontend page/route/sidebar change.
 
+### Phase 8B-2A — HR Admin payroll creation and read APIs
+Status: **Complete.** HR_ADMIN-only HTTP surface over the existing Phase 8B-1 service -- no retry
+endpoint, no employee/self-service payslip access, no PDF download, no `COMPLETED` transition, no
+frontend change, and no new migration.
+
+- **Endpoints**, all `@PreAuthorize("hasRole('HR_ADMIN')")`:
+  - `POST /api/payroll-runs` -- body is `CreatePayrollRunRequest(month, year)` only (Bean
+    Validation: both `@NotNull`, month `1-12`, year `2000-2100`); calls the existing
+    `PayrollRunService.createAndCalculate(...)` synchronously and returns `201` with the final
+    `CALCULATED` (or throws) state -- never a fake intermediate `PROCESSING` response. The actor id
+    comes only from `AuthenticatedUser.userId()`; the request body cannot supply or override an
+    actor, rate, status, period date, or any monetary/payslip value -- verified directly by a test
+    that sends exactly those extra fields in the JSON body and confirms they have no effect.
+  - `GET /api/payroll-runs` -- optional `status`/`year` query filters, paginated, default
+    `createdAt DESC` with an `id DESC` tiebreaker always appended (mirrors
+    `LeaveRequestService.withIdDescTiebreaker`) that filters can never remove; an invalid `status`
+    or an out-of-range `year` (checked against the same 2000-2100 bound) returns `400`.
+  - `GET /api/payroll-runs/{id}` -- `404 PAYROLL_RUN_NOT_FOUND` for an unknown id.
+  - `GET /api/payroll-runs/{id}/payslips` -- verifies the run exists first (`404
+    PAYROLL_RUN_NOT_FOUND`, never a silently-empty page for an unknown run id), paginated, default
+    `employeeCodeSnapshot ASC` with an `id ASC` tiebreaker.
+  - `GET /api/payslips/{id}` -- HR_ADMIN only in this sub-phase (`404 PAYSLIP_NOT_FOUND` for an
+    unknown id); employee-ownership rules are explicitly deferred to Phase 8B-2B, and this endpoint
+    does not yet grant EMPLOYEE access at all.
+- **DTOs** (entities are never serialized directly): `PayrollRunResponse` includes every
+  `PayrollRun` field including the four rate snapshots (included because they explain the
+  historical calculation policy for that run -- still fixed, flat, demonstration-only figures, not
+  real statutory rates) but never audit-actor information. `PayslipResponse` includes every
+  `Payslip` field except `pdfPath` (no download link exists yet) -- built entirely from the
+  entity's own stored snapshot/monetary columns, never by re-reading current Employee/Department/
+  SalaryStructure state.
+- New read-only `PayrollQueryService` (`@Transactional(readOnly = true)`), kept separate from
+  `PayrollRunTransactionService`'s write role. `PayrollRunRepository` gained one `search`
+  method (optional status/year filter, explicit `countQuery`, same shape as
+  `LeaveRequestRepository.search`) -- no change was needed to `PayslipRepository`, since its
+  existing `findByPayrollRunId`/`findWithDetailsById` (from Phase 8A-2) already fetch-join
+  `payrollRun`+`employee` and accept an arbitrary `Pageable` sort.
+- New `PayrollExceptionHandler` (`@RestControllerAdvice`, mirrors `LeaveExceptionHandler`'s flat
+  `ProblemDetail` style): `INVALID_PAYROLL_PERIOD` (400), `PAYROLL_RUN_PERIOD_ALREADY_EXISTS` (409,
+  with `periodMonth`/`periodYear` properties), `PAYROLL_RUN_FAILED` (422, with `payrollRunId` and
+  the stable `failureCode`, detail text equal to the service's own already-sanitized message),
+  `PAYROLL_RUN_NOT_FOUND` (404), `PAYSLIP_NOT_FOUND` (404). **Deliberately did not** add
+  `uq_payroll_runs_period` to `ApiExceptionHandler`'s generic constraint-code map: since
+  `PayrollRunTransactionService.createRun` already catches and translates that exact violation
+  before it ever leaves the service layer, a second handler for the same constraint would be
+  unreachable dead code, not genuine defence-in-depth, and would risk two divergent response shapes
+  for one conceptual error. `PayrollRunNotFoundException`/`PayslipNotFoundException` are new, plain,
+  message-only exceptions matching the existing `LeaveBalanceNotFoundException` shape.
+- Every error response verified free of stack traces, SQL text, exception class names, and (for the
+  422 calculation-failure case specifically) any salary/deduction/rate value -- the sanitized
+  message and stable code are the only content.
+- Backend: 33 new tests (308 total, up from 275) -- 29 in `PayrollRunControllerTest` (valid
+  creation, request-body spoofing rejected, every month/year boundary and null-field 400, duplicate
+  period 409, calculation-failure 422 with run id/code and a verified committed `FAILED` run with
+  zero payslips, 401/403 on every endpoint, newest-created-first listing, the `createdAt`-tie `id
+  DESC` tiebreaker, status/year filters individually and combined, filter preservation across
+  pages, invalid status/year query values, full run-detail DTO including rate snapshots and a
+  failure reason, unknown-run 404, run-scoped payslip listing with deterministic ordering and
+  cross-run isolation, and unknown-run-for-payslips 404 rather than an empty page) and 4 in
+  `PayslipControllerTest` (exact snapshot/monetary detail with no `pdfPath`, unknown-id 404,
+  401/403). `./mvnw.cmd clean verify` passes (308/308, 0 failures, 0 errors); Flyway remains at
+  schema version 13 (no migration in this sub-phase); demo/manual records (`P7DEMO01`, `EMP001`,
+  existing leave/salary data) confirmed unchanged; no `payroll_runs`/`payslips`/`Phase8*` fixture
+  rows leaked. Frontend was not touched and its test suite/build were not re-run.
+- **Explicitly unimplemented, deferred to Phase 8B-2B and later:** the retry endpoint, employee
+  self-service payslip access/ownership rules, PDF generation and download (Apache PDFBox), the
+  `COMPLETED` transition, and every frontend page/route/sidebar change.
+
 ## Phases 9–13
 Status: Not started.
