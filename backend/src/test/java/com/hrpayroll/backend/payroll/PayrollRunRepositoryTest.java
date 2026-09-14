@@ -5,6 +5,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import com.hrpayroll.backend.support.PayrollTestFixtures;
 import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Optional;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -18,7 +20,10 @@ import org.springframework.transaction.annotation.Transactional;
  * Real-PostgreSQL JPA mapping/repository tests for {@link PayrollRun}. No
  * service/orchestration layer exists yet in this sub-phase, so these
  * exercise the entity and repository directly -- the correct layer to test
- * at when there is nothing above it yet.
+ * at when there is nothing above it yet. Rows are saved directly via the
+ * repository, bypassing the audited PayrollRunService, so each saved run's
+ * id is tracked explicitly and passed to cleanup -- never cleaned up by
+ * period_year alone (see PayrollTestFixturesCleanupScopeTest).
  */
 @SpringBootTest
 class PayrollRunRepositoryTest {
@@ -29,14 +34,23 @@ class PayrollRunRepositoryTest {
     @Autowired
     private JdbcTemplate jdbcTemplate;
 
+    private final List<Long> createdRunIds = new ArrayList<>();
+
     @BeforeEach
     void setUp() {
+        createdRunIds.clear();
         PayrollTestFixtures.cleanup(jdbcTemplate);
     }
 
     @AfterEach
     void tearDown() {
-        PayrollTestFixtures.cleanup(jdbcTemplate);
+        PayrollTestFixtures.cleanup(jdbcTemplate, createdRunIds);
+    }
+
+    private PayrollRun saveTestRun(int periodMonth) {
+        PayrollRun saved = payrollRunRepository.saveAndFlush(newTestRun(periodMonth));
+        createdRunIds.add(saved.getId());
+        return saved;
     }
 
     private static PayrollRun newTestRun(int periodMonth) {
@@ -56,7 +70,7 @@ class PayrollRunRepositoryTest {
 
     @Test
     void savedRunRoundTripsStatusEnumAndRateSnapshotsExactly() {
-        PayrollRun saved = payrollRunRepository.saveAndFlush(newTestRun(2));
+        PayrollRun saved = saveTestRun(2);
 
         PayrollRun reloaded = payrollRunRepository.findById(saved.getId()).orElseThrow();
 
@@ -70,7 +84,7 @@ class PayrollRunRepositoryTest {
 
     @Test
     void findByPeriodMonthAndPeriodYearFindsAnExistingRun() {
-        payrollRunRepository.saveAndFlush(newTestRun(3));
+        saveTestRun(3);
 
         Optional<PayrollRun> found =
                 payrollRunRepository.findByPeriodMonthAndPeriodYear(3, PayrollTestFixtures.TEST_PERIOD_YEAR);
@@ -92,7 +106,7 @@ class PayrollRunRepositoryTest {
         assertThat(payrollRunRepository.existsByPeriodMonthAndPeriodYear(5, PayrollTestFixtures.TEST_PERIOD_YEAR))
                 .isFalse();
 
-        payrollRunRepository.saveAndFlush(newTestRun(5));
+        saveTestRun(5);
 
         assertThat(payrollRunRepository.existsByPeriodMonthAndPeriodYear(5, PayrollTestFixtures.TEST_PERIOD_YEAR))
                 .isTrue();
@@ -111,7 +125,7 @@ class PayrollRunRepositoryTest {
     @Test
     @Transactional
     void findByIdForUpdateReturnsTheLockedRow() {
-        PayrollRun saved = payrollRunRepository.saveAndFlush(newTestRun(6));
+        PayrollRun saved = saveTestRun(6);
 
         Optional<PayrollRun> locked = payrollRunRepository.findByIdForUpdate(saved.getId());
 

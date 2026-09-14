@@ -5,6 +5,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.hrpayroll.backend.support.PayrollTestFixtures;
 import java.math.BigDecimal;
+import java.util.ArrayList;
+import java.util.List;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -18,7 +20,10 @@ import org.springframework.jdbc.core.JdbcTemplate;
  * columns and their CHECK constraints, via raw JdbcTemplate SQL rather than
  * JPA -- proves the database itself rejects invalid rows independent of any
  * future application-level validation. Each rejected INSERT is a single
- * atomic statement, so no partial/invalid row is ever persisted.
+ * atomic statement, so no partial/invalid row is ever persisted. Rows
+ * inserted directly here bypass the audited PayrollRunService, so each
+ * successful insert's id is tracked explicitly and passed to cleanup --
+ * never cleaned up by period_year alone (see PayrollTestFixturesCleanupScopeTest).
  */
 @SpringBootTest
 class PayrollRunConstraintTest {
@@ -26,20 +31,24 @@ class PayrollRunConstraintTest {
     @Autowired
     private JdbcTemplate jdbcTemplate;
 
+    private final List<Long> createdRunIds = new ArrayList<>();
+
     @BeforeEach
     void setUp() {
+        createdRunIds.clear();
         PayrollTestFixtures.cleanup(jdbcTemplate);
     }
 
     @AfterEach
     void tearDown() {
-        PayrollTestFixtures.cleanup(jdbcTemplate);
+        PayrollTestFixtures.cleanup(jdbcTemplate, createdRunIds);
     }
 
     @Test
     void insertingWithoutV13ColumnsReadsBackAllFourDemoDefaultsAndVersionZero() {
         long id = PayrollTestFixtures.insertPayrollRunWithoutV13Columns(
                 jdbcTemplate, 1, PayrollTestFixtures.TEST_PERIOD_YEAR);
+        createdRunIds.add(id);
 
         BigDecimal epfRate = jdbcTemplate.queryForObject(
                 "SELECT epf_rate_snapshot FROM payroll_runs WHERE id = ?", BigDecimal.class, id);
@@ -200,7 +209,7 @@ class PayrollRunConstraintTest {
 
     @Test
     void combinedRateSnapshotTotalExactlyOneIsAccepted() {
-        PayrollTestFixtures.insertPayrollRunWithRates(
+        long id = PayrollTestFixtures.insertPayrollRunWithRates(
                 jdbcTemplate,
                 1,
                 PayrollTestFixtures.TEST_PERIOD_YEAR,
@@ -208,6 +217,7 @@ class PayrollRunConstraintTest {
                 new BigDecimal("0.25"),
                 new BigDecimal("0.25"),
                 new BigDecimal("0.25"));
+        createdRunIds.add(id);
 
         assertThat(countTestRows()).isEqualTo(1);
     }

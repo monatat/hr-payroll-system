@@ -7,6 +7,8 @@ import com.hrpayroll.backend.employee.EmployeeRepository;
 import com.hrpayroll.backend.support.PayrollTestFixtures;
 import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Optional;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -22,6 +24,10 @@ import org.springframework.jdbc.core.JdbcTemplate;
  * service/orchestration/PDF layer exists yet -- payslips are constructed
  * directly here exactly as a future PayrollRunService would build them from
  * a {@link PayrollCalculationResult} and employee/department snapshot data.
+ * Payroll runs are saved directly via the repository, bypassing the audited
+ * PayrollRunService, so each saved run's id is tracked explicitly and
+ * passed to cleanup -- never cleaned up by period_year alone (see
+ * PayrollTestFixturesCleanupScopeTest).
  */
 @SpringBootTest
 class PayslipRepositoryTest {
@@ -39,22 +45,24 @@ class PayslipRepositoryTest {
     private JdbcTemplate jdbcTemplate;
 
     private long departmentId;
+    private final List<Long> createdRunIds = new ArrayList<>();
 
     @BeforeEach
     void setUp() {
+        createdRunIds.clear();
         PayrollTestFixtures.cleanup(jdbcTemplate);
         departmentId = PayrollTestFixtures.installDepartment(jdbcTemplate);
     }
 
     @AfterEach
     void tearDown() {
-        PayrollTestFixtures.cleanup(jdbcTemplate);
+        PayrollTestFixtures.cleanup(jdbcTemplate, createdRunIds);
     }
 
     private PayrollRun newSavedRun(int periodMonth) {
         LocalDate periodStart = LocalDate.of(PayrollTestFixtures.TEST_PERIOD_YEAR, periodMonth, 1);
         LocalDate periodEnd = periodStart.withDayOfMonth(periodStart.lengthOfMonth());
-        return payrollRunRepository.saveAndFlush(new PayrollRun(
+        PayrollRun saved = payrollRunRepository.saveAndFlush(new PayrollRun(
                 periodMonth,
                 PayrollTestFixtures.TEST_PERIOD_YEAR,
                 periodStart,
@@ -64,6 +72,8 @@ class PayslipRepositoryTest {
                 new BigDecimal("0.0050"),
                 new BigDecimal("0.0020"),
                 new BigDecimal("0.0500")));
+        createdRunIds.add(saved.getId());
+        return saved;
     }
 
     private Payslip newPayslip(PayrollRun run, Employee employee) {

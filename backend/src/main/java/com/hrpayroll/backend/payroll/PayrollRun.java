@@ -15,10 +15,12 @@ import java.time.LocalDateTime;
 
 /**
  * Maps the existing V8 {@code payroll_runs} table plus V13's rate-snapshot
- * and {@code version} columns. Deliberately has no lifecycle mutation
- * methods yet -- run orchestration (status transitions, failure recording,
- * retry) belongs to Phase 8B, not this schema-foundation phase. Every field
- * is set once, at construction, and never changed afterward here.
+ * and {@code version} columns. Carries exactly two lifecycle transitions,
+ * {@link #markCalculated()} and {@link #markFailed(String)}, both only from
+ * {@code PROCESSING} -- there is deliberately no generic status setter, no
+ * retry/reset method, and no {@code COMPLETED} transition at all (reserved
+ * for Phase 8C, after PDF generation, and enforced simply by the absence of
+ * any method that could reach it).
  */
 @Entity
 @Table(name = "payroll_runs")
@@ -92,6 +94,29 @@ public class PayrollRun {
         this.socsoRateSnapshot = socsoRateSnapshot;
         this.eisRateSnapshot = eisRateSnapshot;
         this.incomeTaxRateSnapshot = incomeTaxRateSnapshot;
+    }
+
+    /**
+     * Transitions PROCESSING -> CALCULATED. Throws if the run is not
+     * currently PROCESSING -- a defensive invariant check; the transaction
+     * service is expected to check status first (under lock) before ever
+     * calling this, so this branch should be unreachable in normal
+     * operation.
+     */
+    public void markCalculated() {
+        if (status != PayrollRunStatus.PROCESSING) {
+            throw new IllegalStateException("Only a PROCESSING payroll run can be marked CALCULATED.");
+        }
+        this.status = PayrollRunStatus.CALCULATED;
+    }
+
+    /** Transitions PROCESSING -> FAILED, storing the sanitized business-level reason. Same invariant-check note as {@link #markCalculated()}. */
+    public void markFailed(String safeReason) {
+        if (status != PayrollRunStatus.PROCESSING) {
+            throw new IllegalStateException("Only a PROCESSING payroll run can be marked FAILED.");
+        }
+        this.status = PayrollRunStatus.FAILED;
+        this.failureReason = safeReason;
     }
 
     public Long getId() {

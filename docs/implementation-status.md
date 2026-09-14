@@ -975,5 +975,120 @@ triggered monthly runs only; payroll remains salary-based with no attendance/lea
   detail HTTP endpoints and DTOs, audit events, exception-handler/constraint-code mapping, concurrency handling,
   PDF generation (Apache PDFBox), and every frontend page/route/sidebar change.
 
+### Phase 8B-1 — Transactional payroll creation and calculation
+Status: **Complete.** Backend service workflow only -- no controller, no HTTP DTOs, no
+`ApiExceptionHandler` mapping, no retry operation, no list/detail endpoints, no PDF generation, and
+no frontend change. No new migration.
+
+- **Three separately committed transactions**, deliberately split across two Spring beans (never a
+  self-invoked method on one bean): a non-transactional `PayrollRunService` facade coordinates the
+  workflow and catches calculation failure; `PayrollRunTransactionService` owns all three
+  `@Transactional` methods, and **all three are explicit `@Transactional(propagation =
+  Propagation.REQUIRES_NEW)`** -- correction applied after review: `createRun`/`calculate` were
+  initially left on default `REQUIRED` propagation, which is indistinguishable from `REQUIRES_NEW`
+  only as long as the facade itself is never called from inside another transaction. A dedicated
+  `PayrollRunTransactionIsolationTest` (calling the real facade from inside an outer
+  `TransactionTemplate` transaction that is deliberately rolled back afterward) proved this: under
+  `REQUIRED`, both the successful and the failed run vanished entirely once the outer transaction
+  rolled back, since they had silently joined it instead of committing independently. All three
+  methods are now `REQUIRES_NEW` unconditionally, so each transaction's outcome is entirely its own
+  regardless of what transaction context the caller happens to be in. Transaction 1 (`createRun`)
+  validates the period, inserts one `PROCESSING` row with the default rate snapshot, flushes
+  immediately (so `uq_payroll_runs_period` is evaluated before returning), and records
+  `PAYROLL_RUN_STARTED` only after the insert survives -- a losing duplicate-period request never
+  reaches this audit call. Transaction 2 (`calculate`) locks the run and every candidate, resolves
+  coverage, calculates and persists every payslip together, marks the run `CALCULATED`, and records
+  `PAYROLL_RUN_CALCULATED`; any failure inside it rolls the whole transaction back (zero payslips, no
+  status change, no audit survive). Transaction 3 (`markFailed`) runs only after the facade catches
+  Transaction 2's failure, independently locks the run, marks it `FAILED` with a sanitized reason,
+  and records `PAYROLL_RUN_FAILED` -- it commits regardless of Transaction 2 having already rolled
+  back. If Transaction 3 itself throws, the original failure is still thrown to the caller (with the
+  `markFailed` exception attached via `addSuppressed`, never silently hidden).
+- **Candidate contract**: `employmentStatus == ACTIVE AND hireDate <= periodStart` -- excludes
+  inactive employees, mid-month hires, and post-month hires, with no proration. New
+  `EmployeeRepository.findPayrollCandidatesForUpdate` loads and pessimistically locks
+  (`PESSIMISTIC_WRITE`, mirroring `findByIdForUpdate`) every candidate in the required
+  `employeeCode ASC, id ASC` order, without filtering on salary-structure existence -- candidate
+  selection and coverage validation are separate rules, exactly as scoped. Locking the same
+  employee row that `SalaryStructureService.create()` locks protects a payroll calculation from a
+  concurrent salary-structure change to a candidate mid-run.
+- **Coverage contract**: new `SalaryStructureRepository.findCoveringStructures` returns every
+  structure individually satisfying `SalaryPeriodCoverage`'s full-period rule for one employee, as
+  a collection (never a single "best match"), so the service can distinguish zero (`FAILED` with
+  `SALARY_COVERAGE_MISSING`), exactly one (calculate), or more than one (`FAILED` with
+  `SALARY_COVERAGE_AMBIGUOUS`, reachable only by bypassing `SalaryStructureService`'s own overlap
+  check via direct SQL, since overlap is not DB-enforced -- proven with exactly that raw-SQL
+  fixture in the test suite). Zero eligible candidates at all fails with `NO_ELIGIBLE_EMPLOYEES`,
+  before ever attempting coverage resolution.
+- New `PayrollFailureCode` (`NO_ELIGIBLE_EMPLOYEES`, `SALARY_COVERAGE_MISSING`,
+  `SALARY_COVERAGE_AMBIGUOUS`, `PAYROLL_CALCULATION_FAILED`), `InvalidPayrollPeriodException`,
+  `PayrollRunPeriodAlreadyExistsException` (mapped from the `uq_payroll_runs_period` constraint via
+  the same Hibernate `ConstraintViolationException` cause-chain walk `ApiExceptionHandler` already
+  uses, not a new PostgreSQL-driver dependency), and `PayrollRunFailedException` (carries the run
+  id, the stable failure code, and a sanitized business-level message -- never a stack trace, raw
+  SQL, or a monetary value). New pure `PayrollPeriod` value object (Spring/JPA-free month/year
+  validation plus first/last calendar date derivation, correctly handling the 2000/2100 leap-year
+  boundary) validates the period *before* any `payroll_runs` row is ever inserted.
+- `PayrollRun` gained exactly two lifecycle methods, `markCalculated()` and `markFailed(String)`,
+  both enforcing `PROCESSING` as the only valid starting state (same defensive-invariant pattern as
+  `LeaveRequest.approve`/`reject`) -- no generic status setter, no retry/reset method, and no
+  `COMPLETED` transition exists at all (enforced by absence; reserved for Phase 8C after PDF
+  generation).
+- Audit events: `PAYROLL_RUN_STARTED` (`payrollRunId`, `periodMonth`, `periodYear`),
+  `PAYROLL_RUN_CALCULATED` (adds `payslipCount`), `PAYROLL_RUN_FAILED` (adds the stable
+  `failureCode` only, never the raw `failure_reason` text). `audit_logs.actor_id` remains the sole
+  "who triggered this" record; no `triggered_by_user_id` column was added.
+- **Duplicate-period concurrency**: two simultaneous `createAndCalculate` calls for the same
+  `(month, year)` -- exactly one succeeds, the other gets `PayrollRunPeriodAlreadyExistsException`
+  from the `uq_payroll_runs_period` constraint (the sole correctness mechanism, never a racy
+  pre-check); exactly one `payroll_runs` row, one payslip set, and one `PAYROLL_RUN_STARTED` audit
+  exist afterward. Proven with a real-PostgreSQL concurrency test in the project's established style
+  (no mocks/H2/Testcontainers/`synchronized`/sleeps, `CountDownLatch` + `ExecutorService`,
+  not class-level `@Transactional`).
+- **Shared-database test isolation**: read-only verified beforehand that the only employees in the
+  shared database (`P7DEMO01`, `EMP001`) are hired in 2025/2026, so a reserved 2000-2005
+  `period_year` band for these tests can never accidentally include an unrelated real employee as a
+  *candidate*. That band is a collision-avoidance choice for candidate selection only, **not** the
+  cleanup mechanism -- correction applied after review: cleanup originally deleted every
+  `payroll_runs`/`audit_logs` row whose `period_year` fell in that band (or equaled 2099), which
+  would have destroyed a genuine, unrelated business payroll run for any of those ordinary calendar
+  years. `PayrollTestFixtures.cleanup` now identifies test-owned runs only by marker or explicit id:
+  a `PAYROLL_RUN_STARTED` audit whose actor is the fixture admin user (every test going through the
+  real `PayrollRunService` satisfies this), or an id explicitly passed in by a test that inserts a
+  `payroll_runs` row directly without going through the audited service (the three affected Phase
+  8A-2 schema/repository-mapping tests were updated to track and pass their own inserted ids). A
+  dedicated `PayrollTestFixturesCleanupScopeTest` inserts an unrelated sentinel run inside the
+  reserved band with no fixture-admin audit and no fixture employee, proves the fixture-owned rows
+  around it are still removed, and proves the sentinel survives -- removing it explicitly in its own
+  `@AfterEach` regardless of outcome. `PayrollTestFixtures` also gained a flexible employee-insert
+  overload (explicit hire date/status), a raw-SQL `insertSalaryStructure` (needed to construct the
+  ambiguous-coverage case, which the real service would reject), an admin-user fixture, and
+  FK-respecting deletion order (audit rows ->
+  payslips -> payroll runs -> salary structures -> users/employees/departments) that never touches
+  a demo/manual record.
+- Backend: 33 new tests (275 total, up from 242) -- 9 in `PayrollPeriodTest` (date derivation
+  including both leap-year boundaries, every invalid/null month and year), 6 in
+  `PayrollRunLifecycleTest` (both transitions, both only from `PROCESSING`, no way to reach
+  `COMPLETED`), 14 in `PayrollRunServiceTest` (candidate eligibility rules, deterministic ordering,
+  open-ended and exact-boundary coverage, exact `PayrollCalculator`-matching monetary results,
+  historical snapshot accuracy, `PENDING`/null PDF fields, `CALCULATED` status with an advanced
+  version, exactly-one `STARTED`/`CALCULATED` audits proven free of salary/rate values, the three
+  distinct all-or-nothing failure paths -- zero candidates, missing coverage, ambiguous coverage --
+  each proving zero payslips survive including for an earlier otherwise-valid candidate, a genuine
+  `NUMERIC(12,2)`-overflow persistence failure proving an already-processed earlier candidate's
+  payslip is rolled back too, and single-threaded duplicate-period rejection), 1 in
+  `PayrollRunConcurrencyTest`, 2 in `PayrollRunTransactionIsolationTest` (the outer-transaction-
+  rollback proof for both the successful and the failed path, described above), and 1 in
+  `PayrollTestFixturesCleanupScopeTest` (the cleanup-scope sentinel proof, also described above).
+  `./mvnw.cmd clean verify` passes (275/275, 0 failures, 0 errors); Flyway remains at schema version
+  13 (no migration in this sub-phase). Demo/manual records
+  (`P7DEMO01`, `EMP001`, existing leave/salary data) confirmed unchanged; `payroll_runs` confirmed
+  empty again after the full suite run (all test fixtures cleaned up correctly). Frontend was not
+  touched and its test suite/build were not re-run.
+- **Explicitly unimplemented, deferred to Phase 8B-2 and later:** controllers, HTTP DTOs,
+  `ApiExceptionHandler` constraint-code mapping, the retry operation, payroll-run list/detail
+  endpoints, payslip list/detail/self-service endpoints, PDF generation (Apache PDFBox), the
+  `COMPLETED` transition, and every frontend page/route/sidebar change.
+
 ## Phases 9–13
 Status: Not started.
