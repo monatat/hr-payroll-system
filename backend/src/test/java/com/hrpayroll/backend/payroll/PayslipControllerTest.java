@@ -25,9 +25,10 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.web.servlet.MockMvc;
 
 /**
- * Real-PostgreSQL controller/integration tests for the HR_ADMIN payslip
- * detail endpoint (Phase 8B-2A). HR_ADMIN-only in this sub-phase --
- * EMPLOYEE self-service ownership rules are deferred to Phase 8B-2B.
+ * Real-PostgreSQL controller/integration tests for {@code GET /api/payslips/{id}} (Phase 8B-2A
+ * created it HR_ADMIN-only; Phase 8B-2B extends it with EMPLOYEE ownership: an owning employee may
+ * read their own payslip, a non-owning employee gets the same 404 PAYSLIP_NOT_FOUND as an unknown
+ * id -- never 403, which would reveal the record's existence to someone who shouldn't know about it).
  */
 @SpringBootTest
 @AutoConfigureMockMvc
@@ -48,6 +49,7 @@ class PayslipControllerTest {
     private JwtService jwtService;
 
     private long departmentId;
+    private long ownEmployeeId;
     private String adminToken;
     private String employeeToken;
     private final List<Long> extraRunIds = new ArrayList<>();
@@ -58,13 +60,13 @@ class PayslipControllerTest {
         PayrollTestFixtures.cleanup(jdbcTemplate);
         departmentId = PayrollTestFixtures.installDepartment(jdbcTemplate);
         long adminUserId = PayrollTestFixtures.installAdminUser(jdbcTemplate, passwordEncoder);
-        long employeeId = PayrollTestFixtures.insertEmployee(jdbcTemplate, departmentId, "PAYSLIP", "000801010001");
+        ownEmployeeId = PayrollTestFixtures.insertEmployee(jdbcTemplate, departmentId, "PAYSLIP", "000801010001");
         long employeeUserId = jdbcTemplate.queryForObject(
                 "INSERT INTO users (email, password_hash, role, account_status, employee_id) "
                         + "VALUES ('phase8b2a.payslip-employee@test.local', ?, 'EMPLOYEE', 'ACTIVE', ?) RETURNING id",
                 Long.class,
                 passwordEncoder.encode("Phase8B2APayslipEmployeePass123!"),
-                employeeId);
+                ownEmployeeId);
 
         adminToken = jwtService.generateAccessToken(
                 new User(adminUserId, PayrollTestFixtures.ADMIN_EMAIL, "hash", UserRole.HR_ADMIN, AccountStatus.ACTIVE, null));
@@ -74,7 +76,7 @@ class PayslipControllerTest {
                 "hash",
                 UserRole.EMPLOYEE,
                 AccountStatus.ACTIVE,
-                employeeId));
+                ownEmployeeId));
     }
 
     @AfterEach
@@ -83,15 +85,14 @@ class PayslipControllerTest {
         PayrollTestFixtures.cleanup(jdbcTemplate, extraRunIds);
     }
 
-    private long insertRunAndPayslip() {
+    private long insertPayslipFor(long employeeId, String codeSuffix) {
         long runId = PayrollTestFixtures.insertPayrollRunWithCreatedAt(jdbcTemplate, 1, YEAR, "CALCULATED", LocalDateTime.now());
         extraRunIds.add(runId);
-        long employeeId = PayrollTestFixtures.insertEmployee(jdbcTemplate, departmentId, "SLIP", "000801010002");
         return PayrollTestFixtures.insertPayslip(
                 jdbcTemplate,
                 runId,
                 employeeId,
-                PayrollTestFixtures.EMPLOYEE_CODE_PREFIX + "SLIP",
+                PayrollTestFixtures.EMPLOYEE_CODE_PREFIX + codeSuffix,
                 new BigDecimal("5000.00"),
                 new BigDecimal("500.00"),
                 new BigDecimal("200.00"),
@@ -102,6 +103,12 @@ class PayslipControllerTest {
                 new BigDecimal("285.00"),
                 new BigDecimal("951.90"),
                 new BigDecimal("4748.10"));
+    }
+
+    /** A payslip belonging to a DIFFERENT employee than the one behind employeeToken. */
+    private long insertRunAndPayslip() {
+        long otherEmployeeId = PayrollTestFixtures.insertEmployee(jdbcTemplate, departmentId, "SLIP", "000801010002");
+        return insertPayslipFor(otherEmployeeId, "SLIP");
     }
 
     @Test
@@ -139,11 +146,31 @@ class PayslipControllerTest {
     }
 
     @Test
-    void employeeReturns403() throws Exception {
+    void owningEmployeeCanReadTheirOwnPayslip() throws Exception {
+        long payslipId = insertPayslipFor(ownEmployeeId, "OWN");
+
+        mockMvc.perform(get("/api/payslips/" + payslipId).header(HttpHeaders.AUTHORIZATION, "Bearer " + employeeToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.employeeCodeSnapshot").value(PayrollTestFixtures.EMPLOYEE_CODE_PREFIX + "OWN"))
+                .andExpect(jsonPath("$.netPay").value(4748.10))
+                .andExpect(jsonPath("$.pdfPath").doesNotExist());
+    }
+
+    @Test
+    void differentEmployeeReceivesTheSameNotFoundAsAnUnknownIdNeverForbidden() throws Exception {
+        long payslipId = insertRunAndPayslip(); // belongs to a different employee than employeeToken
+
+        mockMvc.perform(get("/api/payslips/" + payslipId).header(HttpHeaders.AUTHORIZATION, "Bearer " + employeeToken))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("PAYSLIP_NOT_FOUND"));
+    }
+
+    @Test
+    void hrAdminCanStillReadAnyPayslipRegardlessOfOwnership() throws Exception {
         long payslipId = insertRunAndPayslip();
 
-        mockMvc.perform(
-                        get("/api/payslips/" + payslipId).header(HttpHeaders.AUTHORIZATION, "Bearer " + employeeToken))
-                .andExpect(status().isForbidden());
+        mockMvc.perform(get("/api/payslips/" + payslipId).header(HttpHeaders.AUTHORIZATION, "Bearer " + adminToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.employeeCodeSnapshot").value(PayrollTestFixtures.EMPLOYEE_CODE_PREFIX + "SLIP"));
     }
 }

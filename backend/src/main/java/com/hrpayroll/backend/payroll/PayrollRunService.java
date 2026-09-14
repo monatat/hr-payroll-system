@@ -21,21 +21,35 @@ public class PayrollRunService {
 
     public PayrollRun createAndCalculate(Integer periodMonth, Integer periodYear, Long actorUserId) {
         PayrollPeriod period = PayrollPeriod.of(periodMonth, periodYear);
-
         PayrollRun created = transactionService.createRun(period, actorUserId);
+        return calculateOrMarkFailed(created.getId(), actorUserId);
+    }
 
+    /**
+     * Retries a FAILED run in place (Phase 8B-2B): reuses the same row (a replacement is
+     * impossible anyway, since {@code uq_payroll_runs_period} would reject it), transitioning it
+     * FAILED -> PROCESSING via the independent {@code prepareRetry} transaction, then reuses the
+     * exact same calculation/failure-handling path as {@link #createAndCalculate} -- the payroll
+     * algorithm itself is never duplicated.
+     */
+    public PayrollRun retryAndCalculate(Long payrollRunId, Long actorUserId) {
+        PayrollRun prepared = transactionService.prepareRetry(payrollRunId, actorUserId);
+        return calculateOrMarkFailed(prepared.getId(), actorUserId);
+    }
+
+    private PayrollRun calculateOrMarkFailed(Long payrollRunId, Long actorUserId) {
         try {
-            return transactionService.calculate(created.getId(), actorUserId);
+            return transactionService.calculate(payrollRunId, actorUserId);
         } catch (PayrollRunFailedException ex) {
-            recordFailureWithoutHidingASecondFailure(created.getId(), ex.getFailureCode(), ex.getSafeMessage(), actorUserId, ex);
+            recordFailureWithoutHidingASecondFailure(payrollRunId, ex.getFailureCode(), ex.getSafeMessage(), actorUserId, ex);
             throw ex;
         } catch (RuntimeException ex) {
             // Any other unexpected failure during calculation must still leave the run in a
             // terminal FAILED state rather than stuck in PROCESSING -- use the generic stable code.
             PayrollRunFailedException wrapped = new PayrollRunFailedException(
-                    created.getId(), PayrollFailureCode.PAYROLL_CALCULATION_FAILED, "Unexpected error during payroll calculation.", ex);
+                    payrollRunId, PayrollFailureCode.PAYROLL_CALCULATION_FAILED, "Unexpected error during payroll calculation.", ex);
             recordFailureWithoutHidingASecondFailure(
-                    created.getId(), wrapped.getFailureCode(), wrapped.getSafeMessage(), actorUserId, wrapped);
+                    payrollRunId, wrapped.getFailureCode(), wrapped.getSafeMessage(), actorUserId, wrapped);
             throw wrapped;
         }
     }

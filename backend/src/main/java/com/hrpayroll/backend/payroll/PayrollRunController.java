@@ -76,4 +76,18 @@ public class PayrollRunController {
             @PageableDefault(size = 20, sort = "employeeCodeSnapshot", direction = Sort.Direction.ASC) Pageable pageable) {
         return payrollQueryService.listPayslipsForRun(id, pageable);
     }
+
+    /**
+     * Retries a FAILED run in place (Phase 8B-2B) -- reuses the same run id (a replacement row is
+     * impossible anyway, since {@code uq_payroll_runs_period} would reject it) and returns the
+     * final CALCULATED (or FAILED, via 422) state synchronously, exactly like {@link #create}. No
+     * request body: the only input is the path id, and the actor id comes only from the
+     * authenticated principal.
+     */
+    @PostMapping("/{id}/retry")
+    @PreAuthorize("hasRole('HR_ADMIN')")
+    public PayrollRunResponse retry(@PathVariable Long id, @AuthenticationPrincipal AuthenticatedUser principal) {
+        PayrollRun run = payrollRunService.retryAndCalculate(id, principal.userId());
+        return PayrollRunResponse.from(run);
+    }
 }

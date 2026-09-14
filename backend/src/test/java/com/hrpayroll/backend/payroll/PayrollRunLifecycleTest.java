@@ -8,11 +8,12 @@ import java.time.LocalDate;
 import org.junit.jupiter.api.Test;
 
 /**
- * Unit tests for {@link PayrollRun}'s two lifecycle transitions
- * (PROCESSING -> CALCULATED, PROCESSING -> FAILED). No Spring/database
- * dependency -- pure entity behavior. There is no COMPLETED transition
- * method on this entity at all (enforced by absence, the same way earlier
- * phases enforce "no generic setter" -- there is nothing to call).
+ * Unit tests for {@link PayrollRun}'s three lifecycle transitions
+ * (PROCESSING -> CALCULATED, PROCESSING -> FAILED, FAILED -> PROCESSING via
+ * retry). No Spring/database dependency -- pure entity behavior. There is no
+ * COMPLETED transition method on this entity at all (enforced by absence,
+ * the same way earlier phases enforce "no generic setter" -- there is
+ * nothing to call).
  */
 class PayrollRunLifecycleTest {
 
@@ -77,5 +78,50 @@ class PayrollRunLifecycleTest {
         run.markFailed("first failure");
 
         assertThatThrownBy(() -> run.markFailed("second failure")).isInstanceOf(IllegalStateException.class);
+    }
+
+    @Test
+    void prepareForRetryTransitionsFromFailedToProcessing() {
+        PayrollRun run = newProcessingRun();
+        run.markFailed("No eligible employees for this period.");
+
+        run.prepareForRetry();
+
+        assertThat(run.getStatus()).isEqualTo(PayrollRunStatus.PROCESSING);
+    }
+
+    @Test
+    void prepareForRetryClearsThePreviousFailureReason() {
+        PayrollRun run = newProcessingRun();
+        run.markFailed("No eligible employees for this period.");
+
+        run.prepareForRetry();
+
+        assertThat(run.getFailureReason()).isNull();
+    }
+
+    @Test
+    void prepareForRetryOnAProcessingRunIsRejected() {
+        PayrollRun run = newProcessingRun();
+
+        assertThatThrownBy(run::prepareForRetry).isInstanceOf(IllegalStateException.class);
+    }
+
+    @Test
+    void prepareForRetryOnACalculatedRunIsRejected() {
+        PayrollRun run = newProcessingRun();
+        run.markCalculated();
+
+        assertThatThrownBy(run::prepareForRetry).isInstanceOf(IllegalStateException.class);
+    }
+
+    @Test
+    void thereIsNoWayToReachCompletedFromAnyState() {
+        // No method named/behaving like "markCompleted" exists anywhere on this entity -- enforced
+        // by absence, proven here by reflecting over its own declared methods.
+        boolean anyMethodMentionsCompleted = java.util.Arrays.stream(PayrollRun.class.getDeclaredMethods())
+                .anyMatch(m -> m.getName().toLowerCase(java.util.Locale.ROOT).contains("complet"));
+
+        assertThat(anyMethodMentionsCompleted).isFalse();
     }
 }

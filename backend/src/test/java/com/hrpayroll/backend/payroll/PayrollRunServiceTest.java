@@ -46,9 +46,11 @@ class PayrollRunServiceTest {
 
     private long departmentId;
     private long adminUserId;
+    private final List<Long> extraRunIds = new java.util.ArrayList<>();
 
     @BeforeEach
     void setUp() {
+        extraRunIds.clear();
         PayrollTestFixtures.cleanup(jdbcTemplate);
         departmentId = PayrollTestFixtures.installDepartment(jdbcTemplate);
         adminUserId = PayrollTestFixtures.installAdminUser(jdbcTemplate, passwordEncoder);
@@ -56,7 +58,7 @@ class PayrollRunServiceTest {
 
     @AfterEach
     void tearDown() {
-        PayrollTestFixtures.cleanup(jdbcTemplate);
+        PayrollTestFixtures.cleanup(jdbcTemplate, extraRunIds);
     }
 
     private long insertCandidate(String codeSuffix, String ic) {
@@ -394,5 +396,103 @@ class PayrollRunServiceTest {
                 String.class,
                 payrollRunId);
         assertThat(actions).containsExactly(expectedActions);
+    }
+
+    // ---- Retry (Phase 8B-2B): own reserved year, distinct from every test above in this class ----
+
+    private static final int RETRY_YEAR = YEAR + 10;
+
+    @Test
+    void successfulRetryReusesTheSameRunReCalculatesAndEndsCalculated() {
+        int month = 1;
+        assertThatThrownBy(() -> payrollRunService.createAndCalculate(month, RETRY_YEAR, adminUserId))
+                .isInstanceOf(PayrollRunFailedException.class);
+        Long runId = jdbcTemplate.queryForObject(
+                "SELECT id FROM payroll_runs WHERE period_month = ? AND period_year = ?", Long.class, month, RETRY_YEAR);
+        BigDecimal originalEpfRate = jdbcTemplate.queryForObject(
+                "SELECT epf_rate_snapshot FROM payroll_runs WHERE id = ?", BigDecimal.class, runId);
+        LocalDate originalPeriodStart =
+                jdbcTemplate.queryForObject("SELECT period_start FROM payroll_runs WHERE id = ?", LocalDate.class, runId);
+
+        long employeeId = insertCandidate("RETRY-OK", "0010" + month + "01");
+        coverFullMonth(employeeId, month, new BigDecimal("2000.00"), BigDecimal.ZERO, BigDecimal.ZERO);
+
+        PayrollRun retried = payrollRunService.retryAndCalculate(runId, adminUserId);
+
+        assertThat(retried.getId()).isEqualTo(runId);
+        assertThat(retried.getStatus()).isEqualTo(PayrollRunStatus.CALCULATED);
+        assertThat(retried.getFailureReason()).isNull();
+        assertThat(retried.getPeriodStart()).isEqualTo(originalPeriodStart);
+        assertThat(retried.getEpfRateSnapshot()).isEqualByComparingTo(originalEpfRate);
+        assertThat(payslipRepository.findByPayrollRunId(runId, org.springframework.data.domain.Pageable.unpaged())
+                        .getTotalElements())
+                .isEqualTo(1);
+        assertAuditActionsExactly(runId, "PAYROLL_RUN_STARTED", "PAYROLL_RUN_FAILED", "PAYROLL_RUN_RETRIED", "PAYROLL_RUN_CALCULATED");
+    }
+
+    @Test
+    void successfulRetryAuditDetailsContainNoCompensationValues() {
+        int month = 2;
+        assertThatThrownBy(() -> payrollRunService.createAndCalculate(month, RETRY_YEAR, adminUserId))
+                .isInstanceOf(PayrollRunFailedException.class);
+        Long runId = jdbcTemplate.queryForObject(
+                "SELECT id FROM payroll_runs WHERE period_month = ? AND period_year = ?", Long.class, month, RETRY_YEAR);
+
+        long employeeId = insertCandidate("RETRY-AUDIT", "0010" + month + "02");
+        BigDecimal secretBasePay = new BigDecimal("654321.00");
+        coverFullMonth(employeeId, month, secretBasePay, BigDecimal.ZERO, BigDecimal.ZERO);
+
+        payrollRunService.retryAndCalculate(runId, adminUserId);
+
+        List<String> allDetails = jdbcTemplate.queryForList(
+                "SELECT details::text FROM audit_logs WHERE entity_name = 'PAYROLL_RUN' AND entity_id = ?",
+                String.class,
+                runId);
+        String joined = String.join(" ", allDetails);
+        assertThat(joined).doesNotContain("654321.00").doesNotContain("0.1100");
+    }
+
+    @Test
+    void failedRetryEndsFailedWithZeroPayslipsAndPreservesTheStableFailureCode() {
+        int month = 3;
+        assertThatThrownBy(() -> payrollRunService.createAndCalculate(month, RETRY_YEAR, adminUserId))
+                .isInstanceOf(PayrollRunFailedException.class);
+        Long runId = jdbcTemplate.queryForObject(
+                "SELECT id FROM payroll_runs WHERE period_month = ? AND period_year = ?", Long.class, month, RETRY_YEAR);
+        // No candidate coverage is ever added -- retrying must fail again the same way.
+
+        assertThatThrownBy(() -> payrollRunService.retryAndCalculate(runId, adminUserId))
+                .isInstanceOf(PayrollRunFailedException.class)
+                .satisfies(ex -> assertThat(((PayrollRunFailedException) ex).getFailureCode())
+                        .isEqualTo(PayrollFailureCode.NO_ELIGIBLE_EMPLOYEES));
+
+        String status = jdbcTemplate.queryForObject("SELECT status FROM payroll_runs WHERE id = ?", String.class, runId);
+        Integer payslipCount =
+                jdbcTemplate.queryForObject("SELECT COUNT(*) FROM payslips WHERE payroll_run_id = ?", Integer.class, runId);
+        assertThat(status).isEqualTo("FAILED");
+        assertThat(payslipCount).isZero();
+        assertAuditActionsExactly(
+                runId, "PAYROLL_RUN_STARTED", "PAYROLL_RUN_FAILED", "PAYROLL_RUN_RETRIED", "PAYROLL_RUN_FAILED");
+    }
+
+    @Test
+    void retryingANonFailedRunReturnsTheDomainConflict() {
+        int month = 4;
+        long calculatedRunId = PayrollTestFixtures.insertPayrollRunWithCreatedAt(
+                jdbcTemplate, month, RETRY_YEAR, "CALCULATED", java.time.LocalDateTime.now());
+        extraRunIds.add(calculatedRunId);
+
+        assertThatThrownBy(() -> payrollRunService.retryAndCalculate(calculatedRunId, adminUserId))
+                .isInstanceOf(PayrollRunNotFailedException.class);
+
+        String status =
+                jdbcTemplate.queryForObject("SELECT status FROM payroll_runs WHERE id = ?", String.class, calculatedRunId);
+        assertThat(status).isEqualTo("CALCULATED");
+    }
+
+    @Test
+    void retryingAnUnknownRunReturnsNotFound() {
+        assertThatThrownBy(() -> payrollRunService.retryAndCalculate(999999999L, adminUserId))
+                .isInstanceOf(PayrollRunNotFoundException.class);
     }
 }

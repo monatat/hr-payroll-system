@@ -1,5 +1,7 @@
 package com.hrpayroll.backend.payroll;
 
+import com.hrpayroll.backend.security.AuthenticatedUser;
+import com.hrpayroll.backend.user.UserRole;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
@@ -45,9 +47,26 @@ public class PayrollQueryService {
                 payslipRepository.findByPayrollRunId(runId, withIdAscTiebreaker(pageable)).map(PayslipResponse::from));
     }
 
-    public PayslipResponse getPayslip(Long id) {
+    /**
+     * HR_ADMIN may read any payslip; EMPLOYEE may read only their own. A non-owning EMPLOYEE gets
+     * exactly the same 404 as an unknown id -- never 403, which would reveal that the record
+     * exists at all. Mirrors LeaveRequestService.getById's exact ownership pattern.
+     */
+    public PayslipResponse getPayslip(Long id, AuthenticatedUser principal) {
         Payslip payslip = payslipRepository.findWithDetailsById(id).orElseThrow(PayslipNotFoundException::new);
+
+        boolean isOwnPayslip = payslip.getEmployee().getId().equals(principal.employeeId());
+        if (UserRole.EMPLOYEE.name().equals(principal.role()) && !isOwnPayslip) {
+            throw new PayslipNotFoundException();
+        }
+
         return PayslipResponse.from(payslip);
+    }
+
+    /** EMPLOYEE-only own-payslip history; identity comes only from the caller-supplied employeeId (the JWT claim). */
+    public PagedModel<PayslipResponse> listOwnPayslips(Long employeeId, Pageable pageable) {
+        return new PagedModel<>(
+                payslipRepository.findByEmployeeId(employeeId, withIdDescTiebreaker(pageable)).map(PayslipResponse::from));
     }
 
     /** Mirrors LeaveRequestService.withIdDescTiebreaker -- newest-first listings always break same-createdAt ties by id DESC. */

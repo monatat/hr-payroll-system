@@ -520,4 +520,60 @@ class PayrollRunControllerTest {
         mockMvc.perform(get("/api/payroll-runs/1/payslips").header(HttpHeaders.AUTHORIZATION, "Bearer " + employeeToken))
                 .andExpect(status().isForbidden());
     }
+
+    // ---- Retry (Phase 8B-2B) -- own reserved year within this class, distinct from every test above ----
+
+    private static final int RETRY_YEAR = OTHER_YEAR + 1;
+
+    @Test
+    void hrAdminRetryOfAFailedRunSucceedsAndReturnsCalculated() throws Exception {
+        int month = 1;
+        mockMvc.perform(post("/api/payroll-runs")
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer " + adminToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(createBody(month, RETRY_YEAR)))
+                .andExpect(status().isUnprocessableEntity());
+        Long runId = jdbcTemplate.queryForObject(
+                "SELECT id FROM payroll_runs WHERE period_month = ? AND period_year = ?", Long.class, month, RETRY_YEAR);
+
+        insertCandidateWithCoverage("RETRY1", month, new BigDecimal("1000.00"));
+
+        mockMvc.perform(post("/api/payroll-runs/" + runId + "/retry").header(HttpHeaders.AUTHORIZATION, "Bearer " + adminToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.id").value(runId))
+                .andExpect(jsonPath("$.status").value("CALCULATED"))
+                .andExpect(jsonPath("$.failureReason").doesNotExist());
+    }
+
+    @Test
+    void retryOfAnUnknownRunReturns404WithStableCode() throws Exception {
+        mockMvc.perform(post("/api/payroll-runs/999999999/retry").header(HttpHeaders.AUTHORIZATION, "Bearer " + adminToken))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("PAYROLL_RUN_NOT_FOUND"));
+    }
+
+    @Test
+    void retryOfANonFailedRunReturns409WithStableCode() throws Exception {
+        int month = 2;
+        long calculatedRunId = PayrollTestFixtures.insertPayrollRunWithCreatedAt(
+                jdbcTemplate, month, RETRY_YEAR, "CALCULATED", LocalDateTime.now());
+        extraRunIds.add(calculatedRunId);
+
+        mockMvc.perform(
+                        post("/api/payroll-runs/" + calculatedRunId + "/retry").header(HttpHeaders.AUTHORIZATION, "Bearer " + adminToken))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("PAYROLL_RUN_NOT_FAILED"))
+                .andExpect(jsonPath("$.detail", org.hamcrest.Matchers.not(org.hamcrest.Matchers.containsString("Exception"))));
+    }
+
+    @Test
+    void retryIsUnauthenticatedReturns401() throws Exception {
+        mockMvc.perform(post("/api/payroll-runs/1/retry")).andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void retryByEmployeeReturns403() throws Exception {
+        mockMvc.perform(post("/api/payroll-runs/1/retry").header(HttpHeaders.AUTHORIZATION, "Bearer " + employeeToken))
+                .andExpect(status().isForbidden());
+    }
 }

@@ -29,6 +29,7 @@ public class PayrollRunTransactionService {
     private static final String ACTION_PAYROLL_RUN_STARTED = "PAYROLL_RUN_STARTED";
     private static final String ACTION_PAYROLL_RUN_CALCULATED = "PAYROLL_RUN_CALCULATED";
     private static final String ACTION_PAYROLL_RUN_FAILED = "PAYROLL_RUN_FAILED";
+    private static final String ACTION_PAYROLL_RUN_RETRIED = "PAYROLL_RUN_RETRIED";
     private static final String ENTITY_PAYROLL_RUN = "PAYROLL_RUN";
     private static final String UQ_PAYROLL_RUNS_PERIOD = "uq_payroll_runs_period";
 
@@ -97,6 +98,37 @@ public class PayrollRunTransactionService {
                 Map.of("payrollRunId", saved.getId(), "periodMonth", period.month(), "periodYear", period.year()));
 
         return saved;
+    }
+
+    /**
+     * Retry transaction (Phase 8B-2B). Always its own independent REQUIRES_NEW transaction, for the
+     * same reason as {@link #createRun}/{@link #calculate}. Locks the run row first
+     * (findByIdForUpdate), re-checks under that lock that the status is still FAILED -- this
+     * pessimistic-lock-plus-recheck is the sole correctness mechanism against two concurrent
+     * retries of the same run, exactly mirroring how {@code uq_payroll_runs_period} is the sole
+     * mechanism against duplicate creation -- then transitions FAILED -> PROCESSING, clears the
+     * previous failure reason, and records PAYROLL_RUN_RETRIED, all before this transaction
+     * commits. Reuses the same {@code payroll_runs} row rather than creating a replacement, since
+     * {@code uq_payroll_runs_period} would reject a second row for the same period anyway.
+     */
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public PayrollRun prepareRetry(Long payrollRunId, Long actorUserId) {
+        PayrollRun run = payrollRunRepository.findByIdForUpdate(payrollRunId).orElseThrow(PayrollRunNotFoundException::new);
+        if (run.getStatus() != PayrollRunStatus.FAILED) {
+            throw new PayrollRunNotFailedException(payrollRunId);
+        }
+
+        run.prepareForRetry();
+        payrollRunRepository.saveAndFlush(run);
+
+        auditService.record(
+                actorUserId,
+                ACTION_PAYROLL_RUN_RETRIED,
+                ENTITY_PAYROLL_RUN,
+                run.getId(),
+                Map.of("payrollRunId", run.getId(), "periodMonth", run.getPeriodMonth(), "periodYear", run.getPeriodYear()));
+
+        return run;
     }
 
     /**

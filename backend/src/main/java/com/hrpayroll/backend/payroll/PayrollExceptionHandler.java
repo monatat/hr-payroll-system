@@ -57,6 +57,11 @@ public class PayrollExceptionHandler {
         return problem(HttpStatus.NOT_FOUND, "PAYROLL_RUN_NOT_FOUND", ex.getMessage());
     }
 
+    @ExceptionHandler(PayrollRunNotFailedException.class)
+    public ResponseEntity<ProblemDetail> handleNotFailed(PayrollRunNotFailedException ex) {
+        return problem(HttpStatus.CONFLICT, "PAYROLL_RUN_NOT_FAILED", ex.getMessage());
+    }
+
     @ExceptionHandler(PayslipNotFoundException.class)
     public ResponseEntity<ProblemDetail> handlePayslipNotFound(PayslipNotFoundException ex) {
         return problem(HttpStatus.NOT_FOUND, "PAYSLIP_NOT_FOUND", ex.getMessage());

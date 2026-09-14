@@ -1158,5 +1158,76 @@ frontend change, and no new migration.
   self-service payslip access/ownership rules, PDF generation and download (Apache PDFBox), the
   `COMPLETED` transition, and every frontend page/route/sidebar change.
 
+### Phase 8B-2B — Failed payroll-run retry and employee self-service payslip APIs
+Status: **Complete.** Backend-only. No PDFBox/PDF endpoint, no `COMPLETED` transition, no frontend
+change, no scheduler, and no new migration.
+
+- **`POST /api/payroll-runs/{id}/retry`** (HR_ADMIN only, no request body): retries a `FAILED` run
+  in place. `PayrollRun` gained exactly one new lifecycle method, `prepareForRetry()`
+  (`FAILED -> PROCESSING`, clearing the previous `failureReason`, same defensive-invariant pattern
+  as `markCalculated`/`markFailed`) -- still no generic status setter and no way to reach
+  `COMPLETED`. A new `prepareRetry` transaction on `PayrollRunTransactionService` is explicit
+  `@Transactional(propagation = REQUIRES_NEW)`, locks the run via the existing `findByIdForUpdate`,
+  re-checks `FAILED` under that lock, transitions it, and records `PAYROLL_RUN_RETRIED`
+  (`payrollRunId`/`periodMonth`/`periodYear` only) -- all before committing independently of the
+  caller. `PayrollRunService.retryAndCalculate(...)` is a non-transactional facade exactly like
+  `createAndCalculate`: `prepareRetry` then the *same* existing `calculate`/`markFailed`
+  transactions and the same suppressed-exception failure handling -- refactored the shared
+  calculate-then-record-outcome logic into one private `calculateOrMarkFailed` helper so the
+  payroll algorithm and its failure handling are never duplicated between create and retry. The
+  same row is always reused (a replacement is impossible: `uq_payroll_runs_period` would reject
+  it). Unknown id -> `404 PAYROLL_RUN_NOT_FOUND`; a non-`FAILED` run -> new
+  `PayrollRunNotFailedException` -> `409 PAYROLL_RUN_NOT_FAILED`.
+- **Retry concurrency**: two simultaneous retries of the same `FAILED` run -- exactly one succeeds
+  (`CALCULATED`), the other gets `PayrollRunNotFailedException`; still exactly one `payroll_runs`
+  row, one payslip set, and one `PAYROLL_RUN_RETRIED` audit. The `findByIdForUpdate`
+  pessimistic-lock-plus-status-recheck inside `prepareRetry` is the sole correctness mechanism (no
+  new constraint needed), proven with a real-PostgreSQL concurrency test in the established style.
+  A dedicated transaction-isolation test also proved retry's three transactions survive an outer
+  caller transaction that is later rolled back, exactly like create's.
+- **Employee self-service payslips**: new `GET /api/employees/me/payslips`
+  (`PayslipSelfServiceController`, EMPLOYEE-only, mirrors
+  `SalaryStructureSelfServiceController`'s no-path-variable pattern -- identity comes only from
+  `AuthenticatedUser.employeeId()`, so there is nothing for a client to spoof), paginated via the
+  existing `PayslipRepository.findByEmployeeId` (no new repository method needed), default
+  `createdAt DESC` with the established `id DESC` tiebreaker.
+- **`GET /api/payslips/{id}` ownership extended**: HR_ADMIN may still read any payslip; an EMPLOYEE
+  may now read their own. A non-owning EMPLOYEE receives the exact same `404 PAYSLIP_NOT_FOUND` as
+  an unknown id -- never `403`, which would reveal the record's existence (mirrors
+  `LeaveRequestService.getById`'s exact "404, not 403" ownership pattern). The 8B-2A placeholder
+  blanket-403-for-EMPLOYEE behavior on this endpoint is intentionally superseded here, exactly as
+  8B-2A's own documentation flagged it would be; every other 8B-2A endpoint/error/DTO contract is
+  unchanged.
+- Error handling: new `PayrollRunNotFailedException` mapped in the existing
+  `PayrollExceptionHandler` (same flat `ProblemDetail` style, `409 PAYROLL_RUN_NOT_FAILED`); no
+  stack trace, SQL, exception class name, or monetary/rate value in any response, verified directly.
+- Backend: 25 new tests (333 total, up from 308) -- 5 in `PayrollRunLifecycleTest`
+  (`prepareForRetry`'s transition, reason-clearing, rejection from `PROCESSING`/`CALCULATED`, and a
+  reflection-based proof that no method on the entity mentions "complete[d]"), 5 in
+  `PayrollRunServiceTest` (successful retry reusing the same id/period/rate snapshot with exactly
+  one new payslip set and the `STARTED/FAILED/RETRIED/CALCULATED` audit sequence, audit content
+  free of a planted secret base-pay value, failed retry preserving the stable failure code with
+  zero payslips, retrying a non-`FAILED` run, retrying an unknown id), 1 in
+  `PayrollRunTransactionIsolationTest` (retry's outer-rollback survival), 1 in
+  `PayrollRunConcurrencyTest` (the double-retry race), 5 in `PayrollRunControllerTest` (retry
+  success/404/409/401/403), 3 new + 1 replaced in `PayslipControllerTest` (owning employee
+  succeeds, a different employee gets the same 404 as unknown, HR_ADMIN unaffected -- replacing the
+  now-superseded blanket-403 test), and 6 in the new `PayslipSelfServiceControllerTest` (own
+  payslips only, newest-first with the `id DESC` tiebreaker, pagination, no `pdfPath`, 401, and
+  `403` for HR_ADMIN). `./mvnw.cmd clean verify` passes (333/333, 0 failures, 0 errors); Flyway
+  remains at schema version 13 (no migration in this sub-phase); demo/manual records (`P7DEMO01`,
+  `EMP001`, existing leave/salary data) confirmed unchanged; no `payroll_runs`/`payslips`/`Phase8*`
+  fixture rows leaked (marker/ID-scoped cleanup from Phase 8B-1 preserved and reused unchanged,
+  including the cleanup-sentinel test). Frontend was not touched and its test suite/build were not
+  re-run.
+- **Incidental test-design note**: the first concurrency-test attempt incorrectly assumed a
+  "no eligible employees" starting failure, overlooking that `PayrollRunConcurrencyTest`'s own
+  `setUp()` fixture employee has an *open-ended* salary structure covering every period -- fixed by
+  using a genuine `SALARY_COVERAGE_MISSING` failure (a second candidate deliberately missing
+  coverage) instead; no production code was affected by this test-only correction.
+- **Explicitly unimplemented, deferred to Phase 8C and later:** PDF generation and download (Apache
+  PDFBox), `pdfPath` exposure, the `COMPLETED` transition, and every frontend page/route/sidebar
+  change.
+
 ## Phases 9–13
 Status: Not started.

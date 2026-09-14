@@ -121,6 +121,43 @@ class PayrollRunTransactionIsolationTest {
         assertThat(codeHolder[0]).isEqualTo(PayrollFailureCode.NO_ELIGIBLE_EMPLOYEES);
     }
 
+    @Test
+    void retrySurvivesAnOuterTransactionThatIsLaterRolledBack() {
+        int month = 1;
+        int year = 2011; // this test class's own reserved period, distinct from the two tests above
+        // No candidate yet -- the initial create fails with NO_ELIGIBLE_EMPLOYEES, leaving a FAILED run to retry.
+        try {
+            payrollRunService.createAndCalculate(month, year, adminUserId);
+        } catch (PayrollRunFailedException ignored) {
+            // expected: the run now exists, FAILED
+        }
+        Long runId = jdbcTemplate.queryForObject(
+                "SELECT id FROM payroll_runs WHERE period_month = ? AND period_year = ?", Long.class, month, year);
+
+        long employeeId = PayrollTestFixtures.insertEmployee(
+                jdbcTemplate, departmentId, "ISO-RETRY", "000501010002", LocalDate.of(1999, 1, 1), "ACTIVE");
+        PayrollTestFixtures.insertSalaryStructure(
+                jdbcTemplate, employeeId, new BigDecimal("1000.00"), BigDecimal.ZERO, BigDecimal.ZERO, LocalDate.of(1999, 1, 1), null);
+
+        TransactionTemplate outerTransaction = new TransactionTemplate(transactionManager);
+        outerTransaction.execute(status -> {
+            payrollRunService.retryAndCalculate(runId, adminUserId);
+            status.setRollbackOnly();
+            return null;
+        });
+        // The outer transaction has now rolled back. If prepareRetry/calculate had joined it, the
+        // retry's effects (PROCESSING->CALCULATED, the payslip, the RETRIED/CALCULATED audits)
+        // would all have been undone too.
+
+        PayrollRun reloaded = payrollRunRepository.findById(runId).orElseThrow();
+        assertThat(reloaded.getStatus()).isEqualTo(PayrollRunStatus.CALCULATED);
+        assertThat(payslipRepository.findByPayrollRunId(runId, org.springframework.data.domain.Pageable.unpaged())
+                        .getTotalElements())
+                .isEqualTo(1);
+        assertAuditActionsExactly(
+                runId, "PAYROLL_RUN_STARTED", "PAYROLL_RUN_FAILED", "PAYROLL_RUN_RETRIED", "PAYROLL_RUN_CALCULATED");
+    }
+
     private void assertAuditActionsExactly(Long payrollRunId, String... expectedActions) {
         List<String> actions = jdbcTemplate.queryForList(
                 "SELECT action FROM audit_logs WHERE entity_name = 'PAYROLL_RUN' AND entity_id = ? ORDER BY id",

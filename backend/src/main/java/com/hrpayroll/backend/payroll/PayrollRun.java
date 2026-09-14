@@ -15,12 +15,12 @@ import java.time.LocalDateTime;
 
 /**
  * Maps the existing V8 {@code payroll_runs} table plus V13's rate-snapshot
- * and {@code version} columns. Carries exactly two lifecycle transitions,
- * {@link #markCalculated()} and {@link #markFailed(String)}, both only from
- * {@code PROCESSING} -- there is deliberately no generic status setter, no
- * retry/reset method, and no {@code COMPLETED} transition at all (reserved
- * for Phase 8C, after PDF generation, and enforced simply by the absence of
- * any method that could reach it).
+ * and {@code version} columns. Carries exactly three lifecycle transitions,
+ * {@link #markCalculated()}, {@link #markFailed(String)}, and
+ * {@link #prepareForRetry()} -- there is deliberately no generic status
+ * setter, no reset/cancel/delete method, and no {@code COMPLETED} transition
+ * at all (reserved for Phase 8C, after PDF generation, and enforced simply
+ * by the absence of any method that could reach it).
  */
 @Entity
 @Table(name = "payroll_runs")
@@ -117,6 +117,20 @@ public class PayrollRun {
         }
         this.status = PayrollRunStatus.FAILED;
         this.failureReason = safeReason;
+    }
+
+    /**
+     * Transitions FAILED -> PROCESSING for a retry attempt, clearing the previous failure reason.
+     * Throws if the run is not currently FAILED -- the transaction service is expected to check
+     * status first (under lock) before ever calling this, so this branch should be unreachable in
+     * normal operation, same as {@link #markCalculated()}/{@link #markFailed(String)}.
+     */
+    public void prepareForRetry() {
+        if (status != PayrollRunStatus.FAILED) {
+            throw new IllegalStateException("Only a FAILED payroll run can be retried.");
+        }
+        this.status = PayrollRunStatus.PROCESSING;
+        this.failureReason = null;
     }
 
     public Long getId() {
