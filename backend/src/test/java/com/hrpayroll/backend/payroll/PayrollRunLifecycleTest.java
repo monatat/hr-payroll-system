@@ -8,12 +8,16 @@ import java.time.LocalDate;
 import org.junit.jupiter.api.Test;
 
 /**
- * Unit tests for {@link PayrollRun}'s three lifecycle transitions
+ * Unit tests for {@link PayrollRun}'s four lifecycle transitions
  * (PROCESSING -> CALCULATED, PROCESSING -> FAILED, FAILED -> PROCESSING via
- * retry). No Spring/database dependency -- pure entity behavior. There is no
- * COMPLETED transition method on this entity at all (enforced by absence,
- * the same way earlier phases enforce "no generic setter" -- there is
- * nothing to call).
+ * retry, CALCULATED -> COMPLETED). No Spring/database dependency -- pure
+ * entity behavior. {@code markCompleted()} is the only declared method
+ * capable of reaching COMPLETED (Phase 8C-2A) -- the future 8C-2B
+ * orchestration service is responsible for verifying that every payslip in
+ * the run is GENERATED before ever calling it; the entity itself cannot
+ * query other rows and enforces only its own single-precondition invariant
+ * (must currently be CALCULATED), the same defensive-invariant style as
+ * every other lifecycle method here.
  */
 class PayrollRunLifecycleTest {
 
@@ -116,12 +120,57 @@ class PayrollRunLifecycleTest {
     }
 
     @Test
-    void thereIsNoWayToReachCompletedFromAnyState() {
-        // No method named/behaving like "markCompleted" exists anywhere on this entity -- enforced
-        // by absence, proven here by reflecting over its own declared methods.
-        boolean anyMethodMentionsCompleted = java.util.Arrays.stream(PayrollRun.class.getDeclaredMethods())
-                .anyMatch(m -> m.getName().toLowerCase(java.util.Locale.ROOT).contains("complet"));
+    void markCompletedTransitionsFromCalculatedToCompleted() {
+        PayrollRun run = newProcessingRun();
+        run.markCalculated();
 
-        assertThat(anyMethodMentionsCompleted).isFalse();
+        run.markCompleted();
+
+        assertThat(run.getStatus()).isEqualTo(PayrollRunStatus.COMPLETED);
+    }
+
+    @Test
+    void markCompletedOnAProcessingRunIsRejected() {
+        PayrollRun run = newProcessingRun();
+
+        assertThatThrownBy(run::markCompleted).isInstanceOf(IllegalStateException.class);
+    }
+
+    @Test
+    void markCompletedOnAFailedRunIsRejected() {
+        PayrollRun run = newProcessingRun();
+        run.markFailed("some reason");
+
+        assertThatThrownBy(run::markCompleted).isInstanceOf(IllegalStateException.class);
+    }
+
+    @Test
+    void markCompletedOnAnAlreadyCompletedRunIsRejected() {
+        PayrollRun run = newProcessingRun();
+        run.markCalculated();
+        run.markCompleted();
+
+        assertThatThrownBy(run::markCompleted).isInstanceOf(IllegalStateException.class);
+    }
+
+    @Test
+    void markCompletedIsTheOnlyDeclaredMethodCapableOfReachingCompleted() {
+        // Exactly one method on this entity may mention "complet" in its name -- markCompleted
+        // itself. This replaces the earlier Phase 8A-2/8B-1 "no method reaches COMPLETED" test,
+        // now that markCompleted intentionally exists (Phase 8C-2A).
+        java.util.List<String> methodsMentioningCompleted = java.util.Arrays.stream(PayrollRun.class.getDeclaredMethods())
+                .map(java.lang.reflect.Method::getName)
+                .filter(name -> name.toLowerCase(java.util.Locale.ROOT).contains("complet"))
+                .toList();
+
+        assertThat(methodsMentioningCompleted).containsExactly("markCompleted");
+    }
+
+    @Test
+    void noGenericSetStatusMethodExists() {
+        boolean anySetStatusMethod = java.util.Arrays.stream(PayrollRun.class.getDeclaredMethods())
+                .anyMatch(m -> m.getName().equals("setStatus"));
+
+        assertThat(anySetStatusMethod).isFalse();
     }
 }

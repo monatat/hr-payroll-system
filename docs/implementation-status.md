@@ -1229,5 +1229,122 @@ change, no scheduler, and no new migration.
   PDFBox), `pdfPath` exposure, the `COMPLETED` transition, and every frontend page/route/sidebar
   change.
 
+### Phase 8C-2A — Payslip PDF foundation
+Status: **Complete.** Backend foundation only -- no orchestration service, no
+`POST /api/payroll-runs/{id}/generate-pdfs` or `GET /api/payslips/{id}/pdf` endpoint, no HTTP error
+mappings, no PDF-generation audit events, no generation concurrency, no `markCompleted()` caller,
+and no frontend change. No new migration.
+
+- **Apache PDFBox `3.0.8`** (Apache License 2.0) added to `backend/pom.xml` -- confirmed the
+  current stable `3.0.x` release via the official `pdfbox.apache.org` download page and Maven
+  Central before adding it. Only the single `pdfbox` artifact is declared; `fontbox` and
+  `pdfbox-io` resolve transitively at the same version (verified via `dependency:tree`) -- no
+  `pdfbox-app`/`pdfbox-tools`, no iText/OpenPDF, no font, templating, or reporting library was
+  added.
+- **Storage configuration**: `app.payroll.pdf-storage-dir` (`PAYROLL_PDF_STORAGE_DIR` env
+  override, dev default `./data/payroll-pdfs`) added to `application.yml` and `.env.example`,
+  following the existing `app.*`/`${ENV:default}` convention exactly. That relative default
+  resolves differently depending on whether the backend starts from the repository root or from
+  `backend/`, so `.gitignore` narrowly ignores both actual locations
+  (`/data/payroll-pdfs/`, `/backend/data/payroll-pdfs/`) rather than the whole of `backend/data/`,
+  which would have swept in an unrelated future backend data directory. Generated files are never
+  written under `src/main/resources`.
+- **New `com.hrpayroll.backend.payroll.pdf` package:**
+  - `CurrencyFormatter` -- pure, Spring-free `BigDecimal` -> `String` formatter (e.g.
+    `"RM 1,234.56"`, `"-RM 1,234.56"`). Never converts through `double`/`float`; normalizes via
+    `setScale(2, HALF_UP)` and builds thousands separators directly from `toPlainString()`.
+  - `PayslipPdfData` -- immutable record carrying exactly the fields a payslip PDF may render,
+    deliberately separate from the `Payslip`/`PayrollRun` JPA entities so the generator never
+    risks touching a lazy association and stays fully Spring/JPA-free.
+  - `PayslipPdfGenerator` -- pure PDFBox 3.x renderer (`Loader`/`PDDocument`/`PDType1Font` with
+    `Standard14Fonts.FontName`), single-page, compact layout: heading, payroll period, employee
+    code/name/department/job-title snapshot, earnings section, deductions section, emphasized net
+    pay, and the demonstration disclaimer. Uses a plain ASCII hyphen everywhere a dash is needed
+    in fixed labels/disclaimer text (not an em dash) since Standard 14 fonts use WinAnsiEncoding.
+    An unencodable character in a snapshot value (proven with a CJK employee-name fixture) fails
+    loudly through `PayslipPdfGenerationException` with a sanitized message -- never silently
+    dropped/altered, never a raw PDFBox class name or exception text in the message.
+  - `PdfStorageService` -- plain, directly instantiable class (Spring wiring deferred to 8C-2B).
+    Deterministic server-controlled relative paths
+    (`payroll-run-{runId}/payslip-{payslipId}.pdf`, positive ids only); writes to a temp file in
+    the same target directory, then `ATOMIC_MOVE` + `REPLACE_EXISTING` (falling back to a plain
+    replace if atomic move is unsupported); deletes any surviving temp file in a `finally` block;
+    verifies every resolved path (write and read) stays under the normalized root using
+    `Path.startsWith` (not string-prefix comparison, which a sibling directory like
+    `storage-evil` could otherwise defeat); rejects absolute/traversal stored paths; treats a
+    directory found where a file is expected as a missing file. All exception messages are
+    generic and never contain the absolute root, a temp path, or a raw `IOException` message.
+    The storage root is canonicalized (`toRealPath()`) once at construction, and both `store`
+    and `load` additionally reject any pre-existing symbolic link at the run-directory or final
+    file position and re-verify the real (canonicalized) physical path still lies under that
+    canonical root before any write or read -- lexical normalization alone cannot prove physical
+    containment when a symlink is involved. This is defense against a stored-path/pre-existing-
+    link escape, not against an attacker able to continuously mutate the filesystem during the
+    call (no `SecureDirectoryStream` or platform-specific code was added). The two symlink-escape
+    tests that exercise this create a real OS symbolic link and use a JUnit assumption to skip
+    only themselves, with a clear reason, on an OS/environment that does not permit creating one
+    (verified in this environment: Windows without the `SeCreateSymbolicLinkPrivilege`) --
+    production behavior is never weakened to accommodate a test environment.
+  - `PayrollPdfStorageException`, `PayslipPdfFileMissingException`, `PayslipPdfGenerationException`
+    -- low-level, safe exceptions only; no HTTP status mapping added in this sub-phase.
+- **Entity lifecycle (Phase 8C-2A only -- no orchestration caller yet):**
+  - `Payslip.markPdfGenerated(String relativePath)` / `markPdfFailed()` -- valid only from PENDING
+    or FAILED, rejected from GENERATED; `markPdfGenerated` requires a non-blank relative path and
+    sets `pdfStatus`+`pdfPath` together; `markPdfFailed` sets `pdfStatus = FAILED` and clears
+    `pdfPath` so a FAILED row never retains a usable-looking path. No generic setter for either
+    field.
+  - `PayrollRun.markCompleted()` -- valid only from CALCULATED, rejected from PROCESSING, FAILED,
+    and an already-COMPLETED run. The entity only enforces its own status precondition; verifying
+    that every payslip in the run is actually GENERATED first is explicitly the future Phase
+    8C-2B orchestration service's responsibility, documented on the method itself, since the
+    entity cannot query other rows. The prior Phase 8A-2/8B-1 reflection-based "no method reaches
+    COMPLETED" test in `PayrollRunLifecycleTest` was replaced with assertions that `markCompleted`
+    is the *only* declared method mentioning "complet", that it succeeds only from CALCULATED,
+    that every other starting state is rejected, and that no generic `setStatus` method exists.
+  - A code-level note on `PdfStorageService` documents the future 8C-2B orchestration
+    requirements: move the file before marking GENERATED; catch only expected PDF-generation/
+    filesystem failures per payslip, never broadly catching and suppressing a JPA/database
+    persistence failure; let a persistence failure escape (Hibernate may already have marked the
+    transaction rollback-only); accept that a DB rollback after a successful move leaves a
+    harmless deterministic orphan a later retry overwrites; and never treat a filesystem write as
+    participating in the PostgreSQL transaction.
+- Backend: 63 new tests (396 total, up from 333; 2 skip on an OS/environment that cannot create
+  symbolic links, 0 failures, 0 errors) -- 10 in `CurrencyFormatterTest`, 15 in
+  `PayslipPdfGeneratorTest` (PDF signature/parseability/page count, every required label and
+  exact formatted amount, month/year formatting, disclaimer text, net pay visibility, absence of
+  planted IC/bank/email/rate/path values, sanitized unsupported-character failure, unaltered
+  supported names, repeated-generation resource-closing, and no filesystem file created), 22 in
+  `PdfStorageServiceTest` (deterministic path, positive-id validation, atomic creation, exact
+  bytes preserved, replacement, nested directory creation, temp-file cleanup on success and on a
+  deterministic injected pre-move failure via a package-private test-only hook, traversal/
+  absolute/sibling-prefix-escape rejection, missing-file and directory-masquerading handling,
+  relative-only return value, no absolute path in exception text, safe root-initialization
+  failure, no write outside the root, the real dev directory never created, a read-side symlink
+  escape rejected with no path leaked in the exception (skippable), a write-side symlink run-
+  directory escape rejected with nothing written outside the root and no temp file left behind
+  (skippable), and a normal non-symlink file still loading correctly after the hardening), 11 in
+  the new `PayslipLifecycleTest`, and 5 net new in `PayrollRunLifecycleTest` (11 replaced by 16:
+  the four `markCompleted` transition/rejection tests plus the two replacement reflection tests,
+  minus the one retired "no COMPLETED" test). Focused payroll-package total (including the `pdf`
+  subpackage): **195** (132 pre-existing + 63 new -- corrected from an initially reported 192,
+  which undercounted the true pre-8C-2A payroll-package baseline: it was 132 `@Test` methods,
+  verified directly against the git history of every payroll test file, not 133 as first assumed;
+  192 was in fact arithmetically correct for the sub-phase as it stood before this correction,
+  and no test or count was actually missing). Counts were verified two ways: parsing generated
+  Surefire XML `<testcase>`/`tests=` totals, and counting `@Test` annotations directly in the
+  affected source files. `./mvnw.cmd clean verify` passes (396 run, 0 failures, 0 errors, 2
+  skipped); Flyway remains at schema version 13 (no migration in this sub-phase, per the design
+  report's finding that V8+V13 already contain `pdf_path`/`pdf_status`/`COMPLETED` support);
+  `payroll_runs`/`payslips` confirmed empty (0 rows) after the full suite run, since no test in
+  this sub-phase persists either entity; demo/manual data (`P7DEMO01`/`EMP001` employees,
+  departments, salary structures, leave requests/balances, users) confirmed unchanged; neither
+  `data/payroll-pdfs` nor `backend/data/payroll-pdfs` was created or touched by tests. Frontend
+  was not touched and its test suite/build were not re-run.
+- **Explicitly unimplemented, deferred to Phase 8C-2B and later:** `PayrollPdfService`/
+  orchestration, `POST /api/payroll-runs/{id}/generate-pdfs`, `GET /api/payslips/{id}/pdf`, HTTP
+  error mappings for the PDF-generation/storage exceptions above, PDF-generation audit events,
+  generation concurrency, actually completing a persisted payroll run through a service, and
+  every frontend page/route/sidebar change.
+
 ## Phases 9–13
 Status: Not started.

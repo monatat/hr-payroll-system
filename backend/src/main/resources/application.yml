@@ -60,3 +60,9 @@ app:
     password: ${BOOTSTRAP_ADMIN_PASSWORD:}
   cors:
     allowed-origin: ${CORS_ALLOWED_ORIGIN:http://localhost:5173}
+  payroll:
+    # Root directory for generated payslip PDFs (Phase 8C). Never under
+    # src/main/resources -- generated files must never be packaged into the
+    # application artifact or committed to source control. Tests must always
+    # override this with an isolated temporary directory, never this default.
+    pdf-storage-dir: ${PAYROLL_PDF_STORAGE_DIR:./data/payroll-pdfs}

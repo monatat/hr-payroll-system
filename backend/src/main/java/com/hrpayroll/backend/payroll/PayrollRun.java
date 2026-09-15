@@ -15,12 +15,14 @@ import java.time.LocalDateTime;
 
 /**
  * Maps the existing V8 {@code payroll_runs} table plus V13's rate-snapshot
- * and {@code version} columns. Carries exactly three lifecycle transitions,
- * {@link #markCalculated()}, {@link #markFailed(String)}, and
- * {@link #prepareForRetry()} -- there is deliberately no generic status
- * setter, no reset/cancel/delete method, and no {@code COMPLETED} transition
- * at all (reserved for Phase 8C, after PDF generation, and enforced simply
- * by the absence of any method that could reach it).
+ * and {@code version} columns. Carries exactly four lifecycle transitions,
+ * {@link #markCalculated()}, {@link #markFailed(String)},
+ * {@link #prepareForRetry()}, and {@link #markCompleted()} -- there is
+ * deliberately no generic status setter and no reset/cancel/delete method.
+ * {@code markCompleted()} only enforces its own single precondition (must
+ * currently be CALCULATED); verifying that every payslip in the run is
+ * actually GENERATED first is the future Phase 8C-2B orchestration
+ * service's responsibility, since the entity itself cannot query other rows.
  */
 @Entity
 @Table(name = "payroll_runs")
@@ -131,6 +133,20 @@ public class PayrollRun {
         }
         this.status = PayrollRunStatus.PROCESSING;
         this.failureReason = null;
+    }
+
+    /**
+     * Transitions CALCULATED -> COMPLETED. Throws if the run is not currently CALCULATED -- same
+     * defensive-invariant pattern as the other lifecycle methods. This method only checks its own
+     * status; it cannot verify that every payslip in the run is GENERATED (that requires querying
+     * other rows), so the future Phase 8C-2B orchestration service must confirm that itself,
+     * under the same run-row lock, before ever calling this.
+     */
+    public void markCompleted() {
+        if (status != PayrollRunStatus.CALCULATED) {
+            throw new IllegalStateException("Only a CALCULATED payroll run can be marked COMPLETED.");
+        }
+        this.status = PayrollRunStatus.COMPLETED;
     }
 
     public Long getId() {

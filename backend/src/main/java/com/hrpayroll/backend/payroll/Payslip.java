@@ -16,14 +16,16 @@ import java.math.BigDecimal;
 import java.time.LocalDateTime;
 
 /**
- * Maps the existing V8 {@code payslips} table exactly. Fully immutable
- * after construction -- every *_snapshot and monetary field is set once,
- * from a {@link PayrollCalculationResult} and the employee/department state
- * at calculation time, and never recalculated or re-read from current
- * Employee/Department/SalaryStructure state afterward. No {@code @Version}
- * column: none is approved/migrated for {@code payslips}. No PDF generation
- * logic exists yet -- {@code pdfPath}/{@code pdfStatus} are plain fields
- * whoever constructs a Payslip must supply explicitly.
+ * Maps the existing V8 {@code payslips} table exactly. Every *_snapshot and
+ * monetary field is set once, from a {@link PayrollCalculationResult} and
+ * the employee/department state at calculation time, and never recalculated
+ * or re-read from current Employee/Department/SalaryStructure state
+ * afterward. No {@code @Version} column: none is approved/migrated for
+ * {@code payslips} -- the future Phase 8C-2B orchestration relies on the
+ * {@code payroll_runs} row lock for the whole PDF-generation batch instead
+ * (see {@link #markPdfGenerated(String)}/{@link #markPdfFailed()}). {@code
+ * pdfPath}/{@code pdfStatus} are only ever mutated together through those
+ * two narrow lifecycle methods -- there is no generic setter for either.
  */
 @Entity
 @Table(name = "payslips")
@@ -137,6 +139,38 @@ public class Payslip {
         this.netPay = netPay;
         this.pdfPath = pdfPath;
         this.pdfStatus = pdfStatus;
+    }
+
+    /**
+     * Transitions PENDING or FAILED -> GENERATED, setting {@code pdfStatus} and {@code pdfPath}
+     * together. Rejected from GENERATED (defensive: the future 8C-2B orchestration always skips an
+     * already-GENERATED payslip rather than calling this again, so this branch is expected
+     * unreachable in normal operation -- same style as {@link PayrollRun}'s lifecycle methods).
+     * {@code relativePath} must be the storage-service-computed relative path only, never an
+     * absolute path or client-supplied value.
+     */
+    public void markPdfGenerated(String relativePath) {
+        if (relativePath == null || relativePath.isBlank()) {
+            throw new IllegalArgumentException("relativePath must not be null or blank.");
+        }
+        if (pdfStatus == PdfStatus.GENERATED) {
+            throw new IllegalStateException("A payslip already marked GENERATED cannot be marked GENERATED again.");
+        }
+        this.pdfStatus = PdfStatus.GENERATED;
+        this.pdfPath = relativePath;
+    }
+
+    /**
+     * Transitions PENDING or FAILED -> FAILED, clearing {@code pdfPath} so a FAILED row never
+     * retains a usable-looking path from an earlier attempt. Rejected from GENERATED, same
+     * defensive-invariant reasoning as {@link #markPdfGenerated(String)}.
+     */
+    public void markPdfFailed() {
+        if (pdfStatus == PdfStatus.GENERATED) {
+            throw new IllegalStateException("A payslip already marked GENERATED cannot be marked FAILED.");
+        }
+        this.pdfStatus = PdfStatus.FAILED;
+        this.pdfPath = null;
     }
 
     public Long getId() {

@@ -6,6 +6,15 @@
 backend/target/
 backend/.mvn/wrapper/maven-wrapper.jar
 
+# Generated payslip PDFs and their temp files (Phase 8C dev default storage
+# dir, ./data/payroll-pdfs) -- ignored at both locations the relative default
+# can resolve to, depending on whether the backend starts from the repo root
+# or from backend/. Narrowly scoped to this one directory, not all of
+# backend/data/, so an unrelated future backend data directory is not
+# accidentally ignored.
+/data/payroll-pdfs/
+/backend/data/payroll-pdfs/
+
 # Frontend (Node/Vite)
 frontend/node_modules/
 frontend/dist/

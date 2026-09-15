@@ -45,6 +45,14 @@
             <scope>runtime</scope>
         </dependency>
 
+        <!-- Payslip PDF generation (Phase 8C-2A). Apache License 2.0. fontbox/pdfbox-io
+             are pulled in transitively; no separate font or reporting dependency is added. -->
+        <dependency>
+            <groupId>org.apache.pdfbox</groupId>
+            <artifactId>pdfbox</artifactId>
+            <version>3.0.8</version>
+        </dependency>
+
         <dependency>
             <groupId>org.flywaydb</groupId>
             <artifactId>flyway-core</artifactId>
