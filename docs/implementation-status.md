@@ -1634,8 +1634,129 @@ column, no migration, no payroll-calculation or PDF-generation change.
   Batch, attendance/leave/overtime/proration integration, V14/any migration) remains deferred; this
   sub-phase adds no new deferred item.
 
-Phase 8 remains **In progress** overall (frontend implementation for payroll/payslips has not yet
-started).
+### Phase 8D-2A2 — Frontend payroll API, types, formatting, and secure PDF-download foundation
+Status: **Complete.** Data/utility layer only, built on top of the Phase 8D-2A1 backend contract
+fixes -- no payroll React pages, routes, sidebar items, status badges, forms, tables, or modals
+yet. Backend, database, and dependencies were not touched.
+
+- **`frontend/src/api/payroll.ts`** (new). Types matching the backend exactly: `PayrollRunStatus`,
+  `PdfStatus`, `PayrollFailureCode` (mirrors the backend enum for documentation purposes only --
+  `PayrollRun.failureReason` is typed `string | null`, since the backend actually serializes a
+  free-text safe message, e.g. "No eligible employees for this period.", never the bare code),
+  `CreatePayrollRunRequest`, `PayrollRun`, `Payslip` (including `periodMonth`/`periodYear` from
+  Phase 8D-2A1; `pdfPath` deliberately absent), and `PayrollPdfGenerationResult`. Every
+  `BigDecimal`-backed field is a plain `number`, matching the existing convention in
+  `salaryStructures.ts`/`leave.ts`. `PagedResponse<T>` is a local duplicate (same shape as
+  `leave.ts`'s), not a shared cross-module import -- this codebase has no shared paging type
+  exported from any module yet (verified: nothing imports `leave.ts`'s `PagedResponse` elsewhere),
+  so a domain-local copy follows the established per-module convention rather than introducing a
+  new cross-module dependency.
+  - **API functions**, all via the existing authenticated `apiClient` (no direct `sessionStorage`
+    read, no second `Authorization` header, no client-side re-sorting or re-filtering): `create
+    PayrollRun`, `listPayrollRuns` (status/year/page/size are omitted entirely -- not sent as
+    empty/null -- when not provided, via a small `cleanParams` helper that preserves falsy-but-
+    valid values like `page: 0`), `getPayrollRun`, `listPayrollRunPayslips`, `retryPayrollRun` and
+    `generatePayrollPdfs` (both POST with no body, one argument only -- same convention as
+    `leave.ts`'s `approveLeaveRequest`), `getPayslip`, and `listOwnPayslips` (no employee-id
+    parameter anywhere, on the function signature or the request it sends -- identity comes only
+    from the JWT, matching every other self-service endpoint in this project).
+- **Authenticated PDF download.** Split into two independently-testable pieces plus one
+  convenience wrapper, all in `payroll.ts`: `fetchPayslipPdf(id)` calls `GET /api/payslips/{id}/pdf`
+  with `responseType: 'blob'` through the same `apiClient` (interceptor attaches the Bearer token;
+  nothing here reads `pdfPath` or accepts a caller-supplied filename) and returns `{ blob,
+  filename }`; `saveBlobAsFile(blob, filename)` performs the browser download mechanics
+  (`URL.createObjectURL` -> temporary `<a>` -> `document.body.appendChild` -> `click()` ->
+  `remove()` -> `URL.revokeObjectURL`); `downloadPayslipPdf(id)` composes both for page call sites.
+  Splitting fetch from DOM-manipulation keeps each half cheaply unit-testable (network/parsing
+  behavior vs. browser mechanics) and lets both HR Admin and Employee pages reuse the exact same
+  function later, since ownership is enforced entirely server-side.
+  - **Cleanup hardening (found and fixed during a same-day reconciliation pass, RED-first):** the
+    object URL is now revoked in an outer `finally` that wraps `document.createElement('a')`
+    itself, not just the click/append/remove sequence -- the original version created the object
+    URL, then called `document.createElement('a')` *outside* any `try`, so a `createElement`
+    failure would skip the `finally` entirely and leak the URL. Anchor removal now runs in its own
+    nested `try/finally` so a failure there (e.g. `anchor.remove()` throwing) still lets the outer
+    `finally` run and revoke the URL -- that removal failure is deliberately left to propagate
+    rather than being swallowed. Two RED tests (`document.createElement('a')` throwing;
+    `anchor.remove()` throwing) were written first, confirmed failing against the original
+    implementation (`revokeObjectURL` called 0 times instead of 1) before this fix was made, and
+    the pre-existing `click()`-throws test continues to pass unmodified.
+- **Content-Disposition filename parsing** (`parsePayslipPdfFilename`, exported from
+  `payroll.ts`): extracts a quoted or unquoted `filename=` value, rejects the raw value outright
+  (falls back, rather than attempting to salvage it) if it contains any `/` or `\`, then sanitizes
+  to `[A-Za-z0-9._-]` only, then rejects a result that is blank, exactly `.` or `..`, or does not
+  end in `.pdf`. Any failure at any step falls back to `payslip-{id}.pdf`. This is defense in
+  depth only -- the backend already sanitizes its own filename (Phase 8C-2B2) -- and guarantees no
+  slash, backslash, quote, CR/LF, or semicolon can ever reach the `download` attribute.
+- **`extractBlobProblemDetails`** added to the existing `frontend/src/api/errors.ts` (not a new
+  file, since it is the same "parse the backend's ProblemDetail" concern as the existing
+  `extractErrorMessage`/`extractErrorCode`, both left unchanged). A `responseType: 'blob'` request
+  always gets a `Blob` error body from axios, even when the backend actually returned JSON, so this
+  checks `response.data instanceof Blob`, accepts the body as JSON when *either* `Blob.type` or the
+  response's `content-type` header indicates `application/json`/`application/problem+json`, reads
+  the Blob text asynchronously, parses it inside its own try/catch, and validates that
+  `code`/`detail` are strings before returning them -- returning `{ code: null, detail: null }` for
+  every failure mode (non-Blob data, neither source indicating JSON, empty body, malformed JSON,
+  missing or wrong-typed properties) without ever throwing a second error that could mask the
+  original request failure.
+  - **Dual-source check (found and fixed during the same reconciliation pass, RED-first):** the
+    original version picked one source -- `Blob.type` if truthy, else the header -- so a generic
+    `Blob.type` (e.g. `application/octet-stream`, which some proxies/adapters default to) would
+    silently override an explicit `application/problem+json` response header, discarding a
+    perfectly parseable ProblemDetail body. The two sources are now checked independently
+    (`JSON_CONTENT_TYPE_PATTERN.test(blob.type) || JSON_CONTENT_TYPE_PATTERN.test(headerContentType(...))`)
+    so either one alone is sufficient, and a generic value from one can never suppress an explicit
+    JSON value from the other. A RED test (generic `Blob.type`, JSON header) was written first and
+    confirmed failing against the original implementation before this fix; the symmetric case
+    (JSON `Blob.type`, generic header) and the neither-indicates-JSON case already passed
+    unmodified, confirming they needed no change.
+- **`frontend/src/utils/currency.ts`** (new module; no `src/utils` directory existed before this
+  sub-phase). `formatMYR(amount: number)` uses
+  `Intl.NumberFormat('en-MY', { style: 'currency', currency: 'MYR' })` directly (no manual comma
+  insertion, no string-based rounding) and throws for `NaN`/`Infinity` rather than silently
+  rendering an invalid payroll figure. Its actual output in this environment inserts a U+00A0
+  no-break space between "RM" and the digits, not a plain space -- confirmed by direct inspection
+  and encoded into the tests as the `\u00A0` escape so they are deterministic rather than coincidentally
+  passing.
+- **`frontend/src/utils/payrollPeriod.ts`** (new). `formatPayrollPeriod(month, year)` uses a
+  static 12-entry month-name array and string concatenation only -- it never constructs a `Date`,
+  so it cannot be affected by the viewer's browser timezone (a `Date`-based approach can render the
+  wrong local month near a day boundary depending on timezone). Both `month` (integer, 1-12) and
+  `year` (integer) are validated with `Number.isInteger`, throwing clearly on a fractional month, a
+  non-integer year, or a month outside 1-12, rather than silently displaying a wrong period.
+- **RED-first tests**, one new test file per production file plus one extending the existing
+  `errors.ts`: `payroll.test.ts` (15 tests: API functions, param omission, pagination, error
+  propagation), `payrollPdf.test.ts` (21 tests: filename parsing including quoted/unquoted/missing/
+  blank/malformed/traversal/"."/".."/no-extension/CR-LF/quote/semicolon cases, `fetchPayslipPdf`,
+  `saveBlobAsFile` including the click()-throws, createElement()-throws, and remove()-throws
+  cleanup cases, `downloadPayslipPdf`), `errors.test.ts` (17 tests: 10 for the original
+  `extractBlobProblemDetails` cases, 3 for the dual-source content-type reconciliation above, plus
+  4 confirming `extractErrorMessage`/`extractErrorCode` behavior is unchanged), `currency.test.ts`
+  (7 tests), `payrollPeriod.test.ts` (8 tests). Every new test file was run against the
+  pre-existing code first and failed for the expected reason (`Failed to resolve import` for a
+  brand-new module, `TypeError: ... is not a function` for a new export added to an existing file,
+  or an exact wrong-value assertion failure for the two reconciliation fixes) before any
+  production code was written or changed; each behavior group was then implemented/fixed and
+  re-run to green independently.
+- **Test-baseline reconciliation.** Rather than trusting the previously-documented 128/63/191
+  arithmetic outright, the exact HEAD (`e41dd5a6...`) baseline was re-measured directly: `git stash
+  push -u` (stashing all Phase 8D-2A2 changes, tracked and untracked), `npx vitest run` against the
+  now-HEAD-only tree (128 tests passed -- confirmed identical to the documented baseline), then
+  `git stash pop` to restore. `git cat-file -e HEAD:frontend/src/api/errors.test.ts` confirmed that
+  file did not exist at HEAD (exit 128, "exists on disk, but not in HEAD"), consistent with it
+  being counted as a wholly new file rather than a modification. The original 63-new/191-total
+  arithmetic was confirmed accurate; the two production fixes above then added 5 further tests (2
+  URL-cleanup, 3 content-type), bringing the final count to 68 new tests.
+- Frontend: 68 new tests (196 total, up from a confirmed 128 baseline), all passing; 0 failures; 0
+  skipped. `npm run build` (`tsc -b && vite build`) succeeds. Backend was not touched (`git status`
+  shows zero `backend/` entries), no database or running service was touched, no dependency or
+  lockfile changed, and no generated or downloaded PDF file remains anywhere in the repository.
+- **Explicitly unimplemented, deferred to later:** payroll/payslip React pages, admin and employee
+  routes, sidebar entries, status badges, forms/tables/modals/dialogs, and any frontend
+  authentication change -- all still to come in a later sub-phase.
+
+Phase 8 remains **In progress** overall. The frontend now has its payroll data/API/formatting
+foundation, but no payroll page, route, or sidebar entry exists yet.
 
 ## Phases 9–13
 Status: Not started.
