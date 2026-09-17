@@ -1346,5 +1346,118 @@ and no frontend change. No new migration.
   generation concurrency, actually completing a persisted payroll run through a service, and
   every frontend page/route/sidebar change.
 
+### Phase 8C-2B1 — Payslip PDF orchestration, partial failure, auditing, concurrency, completion
+Status: **Complete.** Backend service orchestration only -- no
+`POST /api/payroll-runs/{id}/generate-pdfs` or `GET /api/payslips/{id}/pdf` endpoint, no HTTP
+error mappings, no frontend change. No new migration.
+
+- **Spring wiring** (`com.hrpayroll.backend.config.PdfStorageConfig`): registers `PdfStorageService`
+  and a new `PayslipPdfRenderer` interface (implemented by the existing `PayslipPdfGenerator`,
+  Phase 8C-2A's rendering seam) as beans. `PdfStorageService`'s `@Bean` method is `@Lazy`, and the
+  new `PayrollPdfService` obtains it only through an `ObjectProvider<PdfStorageService>` resolved
+  inside its transactional method -- **both** are required: `@Lazy` alone would still let an eager
+  consumer force real construction during its own wiring, and `ObjectProvider` alone would not stop
+  Spring's unconditional eager-singleton-preinstantiation pass from constructing it regardless of
+  consumers. Verified empirically, not just by inspection: a dedicated `PayrollPdfWiringTest` (real,
+  unoverridden `app.payroll.pdf-storage-dir` default) was run once with `@Lazy` deliberately removed
+  and failed exactly as predicted (`./data/payroll-pdfs` existed after context boot), then passed
+  once `@Lazy` was restored -- genuine RED before GREEN, not reasoning alone.
+- **`PayslipRepository.findByPayrollRunIdOrderByIdAsc`** -- one new unpaginated, deterministic
+  list query for the internal generation batch. No fetch join and no N+1 risk: the orchestration
+  never touches a payslip's lazy `employee`/`payrollRun` associations (it already holds the locked
+  `PayrollRun` directly, and PDF rendering uses only `Payslip`'s own stored snapshot/monetary
+  columns).
+- **`PayrollPdfGenerationResult`** (new, `payroll` package) -- immutable service result
+  (`payrollRunId`, final `PayrollRunStatus`, `generatedCount`, `failedCount`, `skippedCount`); never
+  an HTTP response, never a JPA entity, never exposes a path/compensation value/employee
+  detail/exception text.
+- **`PayrollPdfService`** (new, deliberately a distinct bean from `PayrollRunTransactionService`,
+  since PDF generation supports partial success -- the opposite of calculation's all-or-nothing
+  rollback): one `@Transactional(propagation = REQUIRES_NEW)` method, `generatePdfs(payrollRunId,
+  actorUserId)`. Locks the run via the existing `findByIdForUpdate` before inspecting status, holds
+  that lock for the whole batch, and re-derives period month/year from the locked run rather than
+  reloading any other association. State behavior: unknown run -> `PayrollRunNotFoundException`;
+  `PROCESSING`/`FAILED` -> new `PayrollRunNotCalculatedException` (no PDF/status/audit change);
+  `CALCULATED` with zero payslips -> new `PayrollRunHasNoPayslipsException` (never vacuously
+  completes); `COMPLETED` -> idempotent no-op returning every payslip counted as skipped, no
+  renderer/storage call, no state/version/file change, no new audit row.
+  - **Per-payslip loop**: an already-`GENERATED` payslip is skipped outright (no renderer/storage
+    call, no mutation). A `PENDING`/`FAILED` payslip is rendered from a `PayslipPdfData` built
+    strictly from its own stored snapshot fields plus the locked run's month/year, stored via
+    `PdfStorageService`'s deterministic path, and only *after* `store()` succeeds is
+    `markPdfGenerated(relativePath)` called. Only `PayslipPdfGenerationException`/
+    `PayrollPdfStorageException` are caught per-payslip -- caught there, `markPdfFailed()` is
+    called and the loop continues; every other exception type is never caught here.
+  - **Persistence boundary**: no repository save/flush call exists inside the per-payslip catch
+    block. Entity mutations (`markPdfGenerated`/`markPdfFailed`) happen in-memory during the loop;
+    `payslipRepository.saveAll(...)`/`flush()` run once, together, after the loop, outside every
+    per-payslip catch -- so a genuine JPA/database persistence failure at that point is never
+    caught by this method and always escapes, rolling back the whole `REQUIRES_NEW` transaction.
+    Verified directly: a package-private `setPreFlushHookForTesting` seam (mirroring
+    `PdfStorageService`'s `preMoveHook` precedent, same narrow "no genuine constraint violation can
+    be safely constructed at this exact point without weakening the schema" justification) lets a
+    test inject a `DataIntegrityViolationException` immediately before the flush; the test proves
+    it escapes `generatePdfs` uncaught and the run/payslip states are fully rolled back to their
+    pre-call values, with zero audit rows written. The already-atomically-moved PDF file for that
+    one payslip is explicitly documented (and deleted in the test's own cleanup) as a harmless,
+    deterministic orphan -- Postgres cannot roll back a filesystem write; a later real retry would
+    simply overwrite the same deterministic path.
+  - **Completion**: after the flush succeeds, if every payslip is now `GENERATED`,
+    `PayrollRun.markCompleted()` is called and saved/flushed; the run stays `CALCULATED` otherwise.
+    A payroll run is never marked `FAILED` because a PDF failed.
+- **Auditing** -- exactly two actions, both via the existing `AuditService`: `PAYROLL_RUN_PDF_
+  GENERATION_FINISHED` (`payrollRunId`, `periodMonth`, `periodYear`, `generatedCount`,
+  `failedCount`, `skippedCount`), recorded once per non-no-op `CALCULATED` invocation regardless of
+  outcome; `PAYROLL_RUN_COMPLETED` (`payrollRunId`, `periodMonth`, `periodYear`, `payslipCount`),
+  recorded exactly once on the `CALCULATED -> COMPLETED` transition. No per-payslip audit row, no
+  separate `STARTED` event, no audit at all for a `COMPLETED` no-op call. Every detail key set was
+  verified exactly (via Jackson-parsed `audit_logs.details`), and every detail payload verified
+  free of employee identity, salary/allowance/deduction/net-pay/rate values, `pdfPath`, and
+  exception/failure text.
+- **Test-only rendering seam**: `PayslipPdfRenderer` (new interface;
+  `PayslipPdfGenerator implements` it, no behavior change) lets tests substitute
+  `ControllablePayslipPdfRenderer` (new, `support` package) -- a real delegating renderer that can
+  be armed to throw `PayslipPdfGenerationException` deterministically once for one employee code,
+  then clears itself so a second call succeeds normally, modeling a genuine retry without OS
+  permission tricks or mutating any immutable production snapshot.
+- **Fixture-hygiene finding, fixed in-session**: the stored-snapshot-correctness test originally
+  renamed the shared "Phase8 Test Department" fixture row via raw SQL to prove the generated PDF
+  reflects the historical snapshot rather than current data, but never restored the name --
+  `PayrollTestFixtures.cleanup()` matches that row by its exact original name, so the renamed row
+  silently survived cleanup and collided (`uq_departments_name`) the next time that same test ran.
+  Caught by running the full payroll-package suite together (not just the new test class in
+  isolation); fixed by restoring the department's name in a `finally` block. No production code was
+  affected; no demo/manual data was ever at risk (the collision was between two runs of the same
+  test's own fixture row).
+- Backend: 15 new tests (411 total, up from 396) -- 1 in `PayslipRepositoryTest`
+  (deterministic id-ASC ordering across two runs), 1 in the new `PayrollPdfWiringTest` (dev
+  directory never created merely by booting the context -- RED-then-GREEN verified by temporarily
+  removing `@Lazy`), 11 in the new `PayrollPdfServiceTest` (successful generation with exact file/
+  audit/version verification, stored-snapshot correctness against later-changed current data,
+  partial failure, retry regenerating only the previously-failed payslip while previously-generated
+  files' bytes/mtimes stay byte-for-byte unchanged, all-already-generated run-state-only repair,
+  `COMPLETED` idempotency, `PROCESSING`/`FAILED` rejection, unknown-run rejection, zero-payslip
+  rejection, and the persistence-failure-escapes proof), 1 in the new
+  `PayrollPdfServiceConcurrencyTest` (two real-PostgreSQL threads racing the same `CALCULATED` run;
+  `CountDownLatch`/`ExecutorService`, no mocks/H2/Testcontainers/synchronized/sleeps; exactly one
+  generates, the other observes the `COMPLETED` no-op; exactly one `FINISHED`/`COMPLETED` audit
+  pair; no duplicated/corrupted file), and 1 in the new
+  `PayrollPdfServiceTransactionIsolationTest` (generation survives an outer `TransactionTemplate`
+  transaction that is deliberately rolled back afterward, proving `REQUIRES_NEW`). Every existing
+  Phase 8C-2A test (including both OS-dependent symlink-escape tests and their assumption-based
+  skip behavior) continues to pass unmodified. `./mvnw.cmd clean verify` passes (411 run, 0
+  failures, 0 errors, 2 skipped); console and Surefire-XML-derived totals cross-checked and
+  identical; Flyway remains at schema version 13 (no migration in this sub-phase); PDFBox remains
+  `3.0.8` (`dependency:tree` re-verified); `payroll_runs`/`payslips` confirmed empty (0 rows) after
+  the full suite run; demo/manual data (`P7DEMO01`/`EMP001` employees, department, salary
+  structures, leave requests/balances, users) confirmed unchanged; neither `data/payroll-pdfs` nor
+  `backend/data/payroll-pdfs` exists anywhere in the repository; no generated PDF or temp file
+  remains anywhere in the repository. Frontend was not touched and its test suite/build were not
+  re-run.
+- **Explicitly unimplemented, deferred to Phase 8C-2B2 and later:**
+  `POST /api/payroll-runs/{id}/generate-pdfs`, `GET /api/payslips/{id}/pdf`, HTTP exception
+  mappings for the PDF orchestration exceptions, HTTP response DTOs, automatic missing-GENERATED-
+  file repair, and every frontend page/route/sidebar change.
+
 ## Phases 9–13
 Status: Not started.

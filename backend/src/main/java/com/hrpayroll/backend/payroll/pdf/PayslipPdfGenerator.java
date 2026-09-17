@@ -24,7 +24,7 @@ import org.apache.pdfbox.pdmodel.font.Standard14Fonts;
  * never silently drops/replaces characters (so an employee name is never silently altered) and
  * never produces corrupt output.
  */
-public final class PayslipPdfGenerator {
+public final class PayslipPdfGenerator implements PayslipPdfRenderer {
 
     private static final String HEADING = "HR Payroll System - Demonstration Payslip";
     private static final String DISCLAIMER_LINE_1 =
@@ -35,6 +35,7 @@ public final class PayslipPdfGenerator {
     private static final float LINE_HEIGHT = 16f;
     private static final float SECTION_GAP = 10f;
 
+    @Override
     public byte[] generate(PayslipPdfData data) {
         Objects.requireNonNull(data, "data must not be null");
 

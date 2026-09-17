@@ -1,5 +1,6 @@
 package com.hrpayroll.backend.payroll;
 
+import java.util.List;
 import java.util.Optional;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -28,4 +29,13 @@ public interface PayslipRepository extends JpaRepository<Payslip, Long> {
             value = "SELECT p FROM Payslip p JOIN FETCH p.payrollRun JOIN FETCH p.employee WHERE p.employee.id = :employeeId",
             countQuery = "SELECT COUNT(p) FROM Payslip p WHERE p.employee.id = :employeeId")
     Page<Payslip> findByEmployeeId(@Param("employeeId") Long employeeId, Pageable pageable);
+
+    /**
+     * Deterministic, unpaginated list of every payslip belonging to one run, for the internal PDF
+     * generation batch (Phase 8C-2B1) -- no fetch join, since the orchestration never touches
+     * {@code payrollRun}/{@code employee} (it already holds the locked {@code PayrollRun} directly,
+     * and PDF rendering uses only Payslip's own stored snapshot/monetary columns), so there is no
+     * lazy association to trigger an N+1 query for in the first place.
+     */
+    List<Payslip> findByPayrollRunIdOrderByIdAsc(Long payrollRunId);
 }

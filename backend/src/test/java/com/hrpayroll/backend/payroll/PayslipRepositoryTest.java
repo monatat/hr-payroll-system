@@ -134,6 +134,24 @@ class PayslipRepositoryTest {
     }
 
     @Test
+    void findByPayrollRunIdOrderByIdAscReturnsEveryPayslipForThatRunInDeterministicIdOrder() {
+        long employeeAId = PayrollTestFixtures.insertEmployee(jdbcTemplate, departmentId, "F", "770101-01-0006");
+        long employeeBId = PayrollTestFixtures.insertEmployee(jdbcTemplate, departmentId, "G", "770101-01-0007");
+        Employee employeeA = employeeRepository.findById(employeeAId).orElseThrow();
+        Employee employeeB = employeeRepository.findById(employeeBId).orElseThrow();
+
+        PayrollRun run = newSavedRun(11);
+        PayrollRun otherRun = newSavedRun(12);
+        Payslip second = payslipRepository.saveAndFlush(newPayslip(run, employeeB));
+        Payslip first = payslipRepository.saveAndFlush(newPayslip(run, employeeA));
+        payslipRepository.saveAndFlush(newPayslip(otherRun, employeeA));
+
+        List<Payslip> result = payslipRepository.findByPayrollRunIdOrderByIdAsc(run.getId());
+
+        assertThat(result).extracting(Payslip::getId).containsExactly(second.getId(), first.getId());
+    }
+
+    @Test
     void paginatedLookupByEmployeeIdReturnsOnlyThatEmployeesPayslips() {
         long employeeAId = PayrollTestFixtures.insertEmployee(jdbcTemplate, departmentId, "D", "770101-01-0004");
         long employeeBId = PayrollTestFixtures.insertEmployee(jdbcTemplate, departmentId, "E", "770101-01-0005");

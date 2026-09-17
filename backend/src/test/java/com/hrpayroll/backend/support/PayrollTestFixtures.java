@@ -50,6 +50,17 @@ public final class PayrollTestFixtures {
      */
     public static final int CONTROLLER_TEST_PERIOD_YEAR = 2006;
 
+    /**
+     * Reserved band for Phase 8C-2B1 PDF-orchestration tests. Same isolation guarantee as
+     * CANDIDATE_TEST_PERIOD_YEAR -- no existing employee qualifies as a candidate for any of these
+     * years -- kept as its own fresh band (never used by any earlier phase's tests) so PDF
+     * generation/concurrency/isolation tests never collide with the payroll-run-only test classes
+     * that already reserve individual years within 2000-2012.
+     */
+    public static final int PDF_TEST_PERIOD_YEAR_MIN = 2013;
+
+    public static final int PDF_TEST_PERIOD_YEAR_MAX = 2020;
+
     private PayrollTestFixtures() {
     }
 
