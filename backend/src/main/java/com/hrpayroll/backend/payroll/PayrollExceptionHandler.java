@@ -1,5 +1,7 @@
 package com.hrpayroll.backend.payroll;
 
+import com.hrpayroll.backend.payroll.pdf.PayrollPdfStorageException;
+import com.hrpayroll.backend.payroll.pdf.PayslipPdfFileMissingException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ProblemDetail;
 import org.springframework.http.ResponseEntity;
@@ -65,6 +67,42 @@ public class PayrollExceptionHandler {
     @ExceptionHandler(PayslipNotFoundException.class)
     public ResponseEntity<ProblemDetail> handlePayslipNotFound(PayslipNotFoundException ex) {
         return problem(HttpStatus.NOT_FOUND, "PAYSLIP_NOT_FOUND", ex.getMessage());
+    }
+
+    @ExceptionHandler(PayrollRunNotCalculatedException.class)
+    public ResponseEntity<ProblemDetail> handleNotCalculated(PayrollRunNotCalculatedException ex) {
+        return problem(HttpStatus.CONFLICT, "PAYROLL_RUN_NOT_CALCULATED", ex.getMessage());
+    }
+
+    @ExceptionHandler(PayrollRunHasNoPayslipsException.class)
+    public ResponseEntity<ProblemDetail> handleHasNoPayslips(PayrollRunHasNoPayslipsException ex) {
+        return problem(HttpStatus.CONFLICT, "PAYROLL_RUN_HAS_NO_PAYSLIPS", ex.getMessage());
+    }
+
+    @ExceptionHandler(PayslipPdfNotAvailableException.class)
+    public ResponseEntity<ProblemDetail> handlePdfNotAvailable(PayslipPdfNotAvailableException ex) {
+        return problem(HttpStatus.CONFLICT, "PAYSLIP_PDF_NOT_AVAILABLE", ex.getMessage());
+    }
+
+    /**
+     * The stored path resolved safely but no regular file exists there -- a server-side data
+     * integrity anomaly, never a client input problem. Detail is the exception's own fixed, safe
+     * message; never the resolved path.
+     */
+    @ExceptionHandler(PayslipPdfFileMissingException.class)
+    public ResponseEntity<ProblemDetail> handlePdfFileMissing(PayslipPdfFileMissingException ex) {
+        return problem(HttpStatus.INTERNAL_SERVER_ERROR, "PAYSLIP_PDF_FILE_MISSING", ex.getMessage());
+    }
+
+    /**
+     * Any other payslip PDF storage-layer failure: an invalid/traversal/symlink stored path, a
+     * read failure, or the storage root failing to initialize. {@code PayrollPdfStorageException}'s
+     * own message is already a safe, generic, business-level sentence (never a path or raw
+     * {@code IOException} message), so it is used directly.
+     */
+    @ExceptionHandler(PayrollPdfStorageException.class)
+    public ResponseEntity<ProblemDetail> handlePdfStorageUnavailable(PayrollPdfStorageException ex) {
+        return problem(HttpStatus.INTERNAL_SERVER_ERROR, "PAYROLL_PDF_STORAGE_UNAVAILABLE", ex.getMessage());
     }
 
     private static ResponseEntity<ProblemDetail> problem(HttpStatus status, String code, String detail) {

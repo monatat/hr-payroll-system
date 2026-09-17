@@ -31,10 +31,13 @@ public class PayrollRunController {
 
     private final PayrollRunService payrollRunService;
     private final PayrollQueryService payrollQueryService;
+    private final PayrollPdfService payrollPdfService;
 
-    public PayrollRunController(PayrollRunService payrollRunService, PayrollQueryService payrollQueryService) {
+    public PayrollRunController(
+            PayrollRunService payrollRunService, PayrollQueryService payrollQueryService, PayrollPdfService payrollPdfService) {
         this.payrollRunService = payrollRunService;
         this.payrollQueryService = payrollQueryService;
+        this.payrollPdfService = payrollPdfService;
     }
 
     /**
@@ -89,5 +92,21 @@ public class PayrollRunController {
     public PayrollRunResponse retry(@PathVariable Long id, @AuthenticationPrincipal AuthenticatedUser principal) {
         PayrollRun run = payrollRunService.retryAndCalculate(id, principal.userId());
         return PayrollRunResponse.from(run);
+    }
+
+    /**
+     * Synchronously generates PDFs for a CALCULATED run's PENDING/FAILED payslips (Phase 8C-2B2).
+     * Always returns 200 -- complete success, partial success (some payslips FAILED), and a
+     * COMPLETED idempotent no-op all reflect the real outcome in the response body rather than a
+     * fake asynchronous/PROCESSING status; only an invalid run state or an unexpected
+     * storage-layer failure raises an HTTP error (see {@link PayrollExceptionHandler}). No request
+     * body: the only input is the path id, and the actor id comes only from the authenticated
+     * principal, exactly like {@link #retry}.
+     */
+    @PostMapping("/{id}/generate-pdfs")
+    @PreAuthorize("hasRole('HR_ADMIN')")
+    public PayrollPdfGenerationResponse generatePdfs(@PathVariable Long id, @AuthenticationPrincipal AuthenticatedUser principal) {
+        PayrollPdfGenerationResult result = payrollPdfService.generatePdfs(id, principal.userId());
+        return PayrollPdfGenerationResponse.from(result);
     }
 }

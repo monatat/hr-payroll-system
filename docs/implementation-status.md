@@ -1459,5 +1459,106 @@ error mappings, no frontend change. No new migration.
   mappings for the PDF orchestration exceptions, HTTP response DTOs, automatic missing-GENERATED-
   file repair, and every frontend page/route/sidebar change.
 
+### Phase 8C-2B2 — Payroll PDF generation and secure download HTTP APIs
+Status: **Complete.** HTTP layer only, over the existing Phase 8C-2B1 orchestration/download
+services -- no frontend page/route/sidebar/client change, no new migration, no new PDF
+rendering/layout behavior, no regeneration of already-GENERATED payslips, and no automatic repair
+of a GENERATED payslip whose physical file is missing.
+
+- **`POST /api/payroll-runs/{id}/generate-pdfs`** (added to the existing `PayrollRunController`,
+  `@PreAuthorize("hasRole('HR_ADMIN')")`, no request body, actor id only from
+  `AuthenticatedUser.userId()`): calls the existing `PayrollPdfService.generatePdfs(id,
+  actorUserId)` synchronously and always returns **200** -- complete success, partial success
+  (`failedCount > 0`), and a `COMPLETED` idempotent no-op are all real outcomes reflected in the
+  response body, never a fake asynchronous/PROCESSING status. New `PayrollPdfGenerationResponse`
+  (`payrollRunId`, `status`, `generatedCount`, `failedCount`, `skippedCount`) is a dedicated HTTP
+  DTO, mapped from the existing `PayrollPdfGenerationResult` via a static `from(...)` -- the
+  service's internal result type is never returned directly. Error behavior: unknown run -> `404
+  PAYROLL_RUN_NOT_FOUND`; `PROCESSING`/`FAILED` -> new `409 PAYROLL_RUN_NOT_CALCULATED`;
+  `CALCULATED` with zero payslips -> new `409 PAYROLL_RUN_HAS_NO_PAYSLIPS`; an unexpected
+  storage-root initialization failure (thrown by `PdfStorageService`'s constructor on first
+  `ObjectProvider.getObject()` call, before any per-payslip processing) -> `500
+  PAYROLL_PDF_STORAGE_UNAVAILABLE`. Per-payslip render/storage failures remain internal to
+  `PayrollPdfService` exactly as built in 8C-2B1 -- they are never HTTP exceptions; the endpoint
+  still returns 200 with `failedCount > 0` and the run left `CALCULATED`.
+- **`GET /api/payslips/{id}/pdf`** (added to the existing `PayslipController`, deliberately no
+  `@PreAuthorize` -- same convention as the existing `GET /{id}`, since the real authorization
+  rule is ownership-based, not role-gated): new `PayrollPdfDownloadService`, a dedicated read-only
+  service kept separate from `PayrollPdfService`'s generation transaction. Loads the payslip via
+  the existing `PayslipRepository.findWithDetailsById`, enforces the exact same ownership rule as
+  `GET /api/payslips/{id}` (HR_ADMIN any, EMPLOYEE own-only, a non-owning EMPLOYEE gets the same
+  `404 PAYSLIP_NOT_FOUND` as an unknown id, never `403`), checks `pdfStatus` (`PENDING`/`FAILED` ->
+  new `409 PAYSLIP_PDF_NOT_AVAILABLE`), and treats a `GENERATED` payslip with a missing/blank
+  `pdfPath` as a server-side integrity failure (`PayslipPdfFileMissingException` -> `500
+  PAYSLIP_PDF_FILE_MISSING`), never a 409. Bytes are read only through the existing
+  `PdfStorageService.load(pdfPath)`, obtained lazily through the same `ObjectProvider` pattern as
+  `PayrollPdfService` -- the controller/service never resolves or reads the stored path directly,
+  and no second filesystem-reading implementation was introduced anywhere. New immutable
+  `PayslipPdfDownload` (`byte[] content`, `String filename`) defensively clones its byte array on
+  both construction and every `content()` access. Any other storage-layer failure (invalid/
+  traversal/symlink stored path, a read failure) surfaces as the existing `PayrollPdfStorageException`
+  -> new `500 PAYROLL_PDF_STORAGE_UNAVAILABLE` mapping.
+  - **Response**: `ResponseEntity<byte[]>` (small, bounded documents; no second filesystem
+    implementation needed) with `Content-Type: application/pdf`, `Content-Length` set from the
+    exact byte array length, `Content-Disposition: attachment; filename="..."`, and
+    `Cache-Control: private, no-store` set explicitly (never relying on `CacheControl` builder
+    chaining ambiguity) since this is personal financial data that must never sit in a shared/proxy
+    cache.
+  - **Filename**: `payslip-{year}-{twoDigitMonth}-{sanitizedEmployeeCode}.pdf`, built entirely
+    server-side from the run's own period and a sanitized copy of the employee code snapshot --
+    never the employee name, IC number, bank information, email, or any filesystem path, and never
+    a database id beyond what the deterministic storage path already used internally (not exposed
+    here at all). Sanitization replaces every character outside `A-Za-z0-9_-` with `_`, which by
+    construction also eliminates any possibility of quote/CR/LF/semicolon/slash/backslash header
+    injection through a planted unsafe employee-code value -- verified directly with a test that
+    plants exactly those characters and asserts the resulting `Content-Disposition` is a single
+    well-formed attachment-filename header.
+- **New safe exceptions**: `PayslipPdfNotAvailableException` (`409 PAYSLIP_PDF_NOT_AVAILABLE`).
+  `PayrollRunNotCalculatedException`/`PayrollRunHasNoPayslipsException` (from Phase 8C-2B1) and the
+  existing `PayslipPdfFileMissingException`/`PayrollPdfStorageException` (from Phase 8C-2A) are
+  mapped for the first time in `PayrollExceptionHandler`, which now also handles the two `pdf`
+  storage failure types alongside its existing payroll-run/payslip handlers. Every response
+  verified free of stack traces, SQL, exception class names, PDFBox internal text, salary/
+  deduction/rate values, employee identity, and any relative or absolute filesystem path.
+- **Test-fixture root-cause finding, fixed in-session**: the download controller test's shared
+  "own employee" fixture was initially created `ACTIVE` with an explicit 1999 hire date (matching
+  an established pattern from other test classes), which made it an accidental payroll candidate
+  for *every* other test method's period in the same class/year, since only one test gave it
+  salary coverage -- every other test's `createAndCalculate` call failed with
+  `SALARY_COVERAGE_MISSING`. Root-caused (systematic-debugging) to the candidate contract
+  (`ACTIVE AND hireDate <= periodStart`) matching regardless of which test "owned" the period;
+  fixed by making the fixture employee `INACTIVE` by default (excluded from candidacy
+  unconditionally) and flipping it to `ACTIVE` only inside the one test that needs it. A second,
+  related bug in the same fixture setup (other "candidate" employees using the 4-arg
+  `insertEmployee` overload, whose default `hire_date = CURRENT_DATE` is *after* the test's 2015
+  period, making them ineligible too) was fixed by introducing an explicit `insertCandidate`
+  helper mirroring `PayrollPdfServiceTest`'s established pattern. No production code was affected;
+  no demo/manual data was ever at risk.
+- Backend: 21 new tests (432 total, up from 411) -- 9 in the new
+  `PayrollRunGeneratePdfsControllerTest` (HR_ADMIN success with exact counts/COMPLETED status/file
+  existence/audit verification, partial failure returning 200 with no leakage, `COMPLETED`
+  idempotency with no file rewrite, `PROCESSING`/`FAILED` -> 409, zero-payslip `CALCULATED` -> 409,
+  unknown run -> 404, unauthenticated -> 401, EMPLOYEE -> 403) and 12 in the new
+  `PayslipPdfDownloadControllerTest` (HR_ADMIN downloads any, exact `Content-Length`, owning
+  EMPLOYEE downloads own, non-owning EMPLOYEE gets the same 404 as unknown, unknown payslip 404,
+  `PENDING`/`FAILED` -> 409, missing physical file -> 500 with no path leaked, traversal stored
+  path -> 500 with no path leaked, a symlink stored path -> 500 (skippable on an OS that cannot
+  create symbolic links, same assumption-based convention as Phase 8C-2A -- 1 skipped in this
+  environment), filename sanitization against a planted unsafe employee code, and unauthenticated
+  -> 401). The existing `PayslipControllerTest` (`GET /api/payslips/{id}` JSON behavior) and
+  `PayrollRunControllerTest` were re-run unmodified and continue to pass exactly as before,
+  confirming no regression. `./mvnw.cmd clean verify` passes (432 run, 0 failures, 0 errors, 3
+  skipped -- the 2 pre-existing Phase 8C-2A symlink tests plus this sub-phase's 1 new symlink
+  test); console and Surefire-XML-derived totals cross-checked and identical; Flyway remains at
+  schema version 13 (no migration in this sub-phase); PDFBox remains `3.0.8`; `payroll_runs`/
+  `payslips` confirmed empty (0 rows) after the full suite run; demo/manual data (`P7DEMO01`/
+  `EMP001` employees, department, leave requests/balances, users) confirmed unchanged; neither
+  `data/payroll-pdfs` nor `backend/data/payroll-pdfs` exists anywhere in the repository; no
+  generated PDF or temp file remains anywhere in the repository. Frontend was not touched and its
+  test suite/build were not re-run.
+- **Explicitly unimplemented, deferred to later:** frontend pages/buttons/routes/sidebar/API
+  client, automatic repair of a GENERATED payslip whose physical file is missing, scheduler/Spring
+  Batch, attendance/leave/overtime/proration integration, and V14/any migration.
+
 ## Phases 9–13
 Status: Not started.
