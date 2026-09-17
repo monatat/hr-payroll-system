@@ -2001,5 +2001,80 @@ Phase 8 remains **In progress** overall. HR Admin now has the complete list -> d
 generate -> download workflow in the UI; only the employee-facing payslip pages remain before the
 payroll frontend surface is complete.
 
+### Phase 8D-2D1 — Employee self-service payslip list, route, and sidebar
+Status: **Complete.** First employee-facing payroll page. A concise, read-only self-service
+history: no PDF download, no deduction breakdown, and no detail route yet -- both arrive in Phase
+8D-2D2.
+
+- **`frontend/src/routes/employee/PayslipListPage.tsx`** (new) replaces the `/employee/payslips`
+  `PlaceholderPage` route in `App.tsx`, inside the existing
+  `<ProtectedRoute allowedRoles={['EMPLOYEE']}>` boundary. Uses only `listOwnPayslips(page, 10)`
+  from `api/payroll.ts` -- the page never calls `apiClient` directly.
+- **Self-service identity/security.** The page never accepts, derives, stores, or sends an
+  employee id: there is no route or query parameter for one, `AuthContext` is never read for an
+  id, and the JWT is never decoded on this page. `listOwnPayslips` calls exactly
+  `GET /api/employees/me/payslips` with only `{ page, size }` -- identity comes solely from the
+  backend's own JWT-derived authorization, confirmed by direct inspection of `api/payroll.ts`
+  before writing this page (the existing employee `SalaryHistoryPage`/`getOwnSalaryHistory`
+  established the same self-service pattern). No client-side ownership filtering exists because
+  none is needed: the backend is the only authorization boundary, and there is nothing for this
+  page to filter.
+- **List presentation.** Loads page 0/size 10 on mount, trusts backend ordering with no
+  client-side re-sort, and renders a semantic table (`sr-only` caption, `overflow-x-auto` wrapper)
+  with columns Payroll Period (`formatPayrollPeriod(periodMonth, periodYear)` -- never derived
+  from `createdAt`), Gross Pay/Total Deductions/Net Pay (all `formatMYR`), PDF Status (plain
+  visible text for `PENDING`/`GENERATED`/`FAILED`, color never the only indicator), and a "View"
+  link to the future `/employee/payslips/{id}` detail route (left intentionally unimplemented
+  until Phase 8D-2D2 -- the link can point at it regardless). No download button, no employee
+  code/name/department/job-title snapshot, no allowance/deduction breakdown, no rate snapshot, no
+  `payrollRunId`, and no `pdfPath` are rendered anywhere on this page -- the full breakdown is
+  deferred to the detail page by design.
+- **Pagination**: Previous/Next disabled at the first/last page and while loading, with an
+  `if (loading) return` early-return guard against duplicate in-flight requests (the same pattern
+  as `PayrollRunListPage`/`PayrollRunDetailPage`). If a fetch reports the current page is out of
+  range for the (possibly changed) dataset, the page clamps to the last valid page and re-fetches
+  automatically rather than rendering an out-of-range empty page. Page size is fixed at 10; no
+  page-size selector was added.
+- **Error handling**: a single fixed fallback, "Could not load your payslips. Please try again.",
+  is shown via `role="alert"` for every load failure -- the backend's own `detail` is deliberately
+  never surfaced on this page (unlike `SalaryHistoryPage`'s convention of trusting
+  `extractErrorMessage`), so a load failure can never reveal anything about the underlying data.
+  `totalPages` is left untouched on error (rather than collapsed to 0) specifically so Previous/Next
+  remain usable for retry based on the last known-good page count.
+- **Route and sidebar.** `App.tsx`'s existing EMPLOYEE-only `/employee/payslips` `ProtectedRoute`
+  boundary is preserved unchanged -- only the rendered element changed from `PlaceholderPage` to
+  `PayslipListPage`. No other employee or HR Admin route was touched. `Sidebar.tsx` gains
+  `{ label: 'My Payslips', to: '/employee/payslips' }` appended to `EMPLOYEE_ITEMS` (no icon,
+  `HR_ADMIN_ITEMS`/the existing `Payroll` item untouched); the stale comment listing
+  `/employee/payslips` as an unfinished placeholder was corrected.
+- **RED-first evidence.** `PayslipListPage.test.tsx` (25 tests) was run against a nonexistent file
+  first (import-resolution failure), then the page was implemented and iterated to green; one
+  real defect was caught this way (systematic-debugging): the initial implementation used
+  `extractErrorMessage` for load errors (following `SalaryHistoryPage`'s precedent), but the
+  RED-first test explicitly asserted the backend's `detail` must never leak for this endpoint --
+  the fixed-fallback requirement in this sub-phase's spec was more conservative than that
+  precedent, so production code was corrected to always show the fixed string, never the
+  backend's `detail`, rather than weakening the test to match the wrong assumption. Two other
+  RED-first findings were purely in test design, caught before any assertion was trusted: the new
+  `/employee/payslips` App-routing test initially checked only for an `h1` reading "My Payslips",
+  which is also the placeholder's own title -- so it passed against the *old* placeholder without
+  proving anything; the test was corrected to also assert the placeholder's specific description
+  text is absent, which then failed correctly (RED) against the placeholder before the route was
+  swapped. `AppLayout.test.tsx`'s employee sidebar enumeration test (extended to five items) and a
+  new href/navigation test were RED before `Sidebar.tsx` was changed.
+- Frontend: 30 new tests (321 total, up from 291) -- 25 in the new `PayslipListPage.test.tsx`, 3
+  new routing tests in `App.test.tsx`, and 2 new sidebar tests in `AppLayout.test.tsx` (one
+  existing enumeration test was extended, not counted as new). All 321 pass; 0 failures; 0
+  skipped. `npm run build` (`tsc -b && vite build`) succeeds. Backend was not touched (`git status`
+  shows zero `backend/` entries), no database or service was touched, no dependency or lockfile
+  changed, and no generated/downloaded PDF or temp file remains anywhere in the repository.
+- **Explicitly unimplemented, deferred to later:** the `/employee/payslips/{id}` detail page, PDF
+  download for employees, the deduction/allowance breakdown, and any HR Admin payroll change --
+  all still to come in Phase 8D-2D2 or later.
+
+Phase 8 remains **In progress** overall. Both HR Admin and Employee now have a working payroll
+list surface in the UI; only the employee payslip detail/download page remains before the payroll
+frontend is feature-complete for this phase.
+
 ## Phases 9–13
 Status: Not started.

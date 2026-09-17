@@ -128,6 +128,31 @@ describe('App', () => {
     expect(screen.getByRole('heading', { name: 'My Leave' })).toBeInTheDocument()
   })
 
+  it('redirects an unauthenticated visitor away from /employee/payslips to login', () => {
+    renderApp('/employee/payslips')
+
+    expect(screen.getByRole('heading', { name: 'Sign in' })).toBeInTheDocument()
+  })
+
+  it('blocks an authenticated HR_ADMIN from /employee/payslips', () => {
+    sessionStorage.setItem('hr_payroll_access_token', fakeToken('HR_ADMIN'))
+
+    renderApp('/employee/payslips')
+
+    expect(screen.getByRole('heading', { name: 'Not authorized' })).toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: 'My Payslips' })).not.toBeInTheDocument()
+  })
+
+  it('allows an authenticated EMPLOYEE into the real /employee/payslips page (not the old placeholder)', () => {
+    sessionStorage.setItem('hr_payroll_access_token', fakeToken('EMPLOYEE', 7))
+
+    renderApp('/employee/payslips')
+
+    expect(screen.getByRole('heading', { name: 'My Payslips' })).toBeInTheDocument()
+    expect(screen.queryByText('View and download payslips.')).not.toBeInTheDocument()
+    expect(screen.queryByText(/placeholder screen/i)).not.toBeInTheDocument()
+  })
+
   it('redirects an unauthenticated visitor away from /admin/leave to login', () => {
     renderApp('/admin/leave')
 

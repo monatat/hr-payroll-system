@@ -36,6 +36,7 @@ function renderLayout(initialEntry: string) {
             <Route path="/employee/profile" element={<h1>My Profile</h1>} />
             <Route path="/employee/salary" element={<h1>Salary History</h1>} />
             <Route path="/employee/leave" element={<h1>My Leave</h1>} />
+            <Route path="/employee/payslips" element={<h1>My Payslips</h1>} />
           </Route>
         </Routes>
       </MemoryRouter>
@@ -78,15 +79,28 @@ describe('AppLayout', () => {
       sessionStorage.setItem('hr_payroll_access_token', fakeToken('EMPLOYEE', 7))
     })
 
-    it('shows exactly the four employee sidebar items and no HR admin items', () => {
+    it('shows exactly the five employee sidebar items and no HR admin items', () => {
       renderLayout('/employee')
 
       const nav = screen.getByRole('navigation')
       const links = within(nav).getAllByRole('link')
-      expect(links.map((link) => link.textContent)).toEqual(['Dashboard', 'My Profile', 'Salary History', 'My Leave'])
+      expect(links.map((link) => link.textContent)).toEqual([
+        'Dashboard',
+        'My Profile',
+        'Salary History',
+        'My Leave',
+        'My Payslips',
+      ])
       expect(within(nav).queryByRole('link', { name: 'Manage Departments' })).not.toBeInTheDocument()
       expect(within(nav).queryByRole('link', { name: 'Manage Employees' })).not.toBeInTheDocument()
       expect(within(nav).queryByRole('link', { name: 'Leave Requests' })).not.toBeInTheDocument()
+      expect(within(nav).queryByRole('link', { name: 'Payroll' })).not.toBeInTheDocument()
+    })
+
+    it('links My Payslips to the exact approved href', () => {
+      renderLayout('/employee')
+
+      expect(screen.getByRole('link', { name: 'My Payslips' })).toHaveAttribute('href', '/employee/payslips')
     })
 
     it('shows Employee as a non-link role label and Logout in the header', () => {
@@ -113,6 +127,15 @@ describe('AppLayout', () => {
       await user.click(screen.getByRole('link', { name: 'My Leave' }))
 
       expect(await screen.findByRole('heading', { name: 'My Leave' })).toBeInTheDocument()
+    })
+
+    it('navigates to /employee/payslips via the sidebar My Payslips link', async () => {
+      const user = userEvent.setup()
+      renderLayout('/employee')
+
+      await user.click(screen.getByRole('link', { name: 'My Payslips' }))
+
+      expect(await screen.findByRole('heading', { name: 'My Payslips' })).toBeInTheDocument()
     })
   })
 
