@@ -174,6 +174,28 @@ describe('App', () => {
     expect(screen.getByRole('heading', { name: 'Payroll Runs' })).toBeInTheDocument()
   })
 
+  it('redirects an unauthenticated visitor away from /admin/payroll/:id to login', () => {
+    renderApp('/admin/payroll/1')
+
+    expect(screen.getByRole('heading', { name: 'Sign in' })).toBeInTheDocument()
+  })
+
+  it('blocks an authenticated EMPLOYEE from /admin/payroll/:id', () => {
+    sessionStorage.setItem('hr_payroll_access_token', fakeToken('EMPLOYEE', 7))
+
+    renderApp('/admin/payroll/1')
+
+    expect(screen.getByRole('heading', { name: 'Not authorized' })).toBeInTheDocument()
+  })
+
+  it('allows an authenticated HR_ADMIN into /admin/payroll/:id', () => {
+    sessionStorage.setItem('hr_payroll_access_token', fakeToken('HR_ADMIN'))
+
+    renderApp('/admin/payroll/1')
+
+    expect(screen.getByText(/loading/i)).toBeInTheDocument()
+  })
+
   it('redirects an unauthenticated visitor away from /admin/leave/:id to login', () => {
     renderApp('/admin/leave/1')
 

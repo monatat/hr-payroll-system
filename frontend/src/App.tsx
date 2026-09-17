@@ -9,6 +9,7 @@ import { EmployeeEditPage } from './routes/admin/EmployeeEditPage'
 import { EmployeeListPage } from './routes/admin/EmployeeListPage'
 import { LeaveRequestDetailPage } from './routes/admin/LeaveRequestDetailPage'
 import { LeaveRequestListPage } from './routes/admin/LeaveRequestListPage'
+import { PayrollRunDetailPage } from './routes/admin/PayrollRunDetailPage'
 import { PayrollRunListPage } from './routes/admin/PayrollRunListPage'
 import { SalaryHistoryPage as AdminSalaryHistoryPage } from './routes/admin/SalaryHistoryPage'
 import { EmployeeProfilePage } from './routes/employee/EmployeeProfilePage'
@@ -102,6 +103,14 @@ function App() {
           element={
             <ProtectedRoute allowedRoles={['HR_ADMIN']}>
               <PayrollRunListPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/admin/payroll/:id"
+          element={
+            <ProtectedRoute allowedRoles={['HR_ADMIN']}>
+              <PayrollRunDetailPage />
             </ProtectedRoute>
           }
         />

@@ -1854,5 +1854,152 @@ Phase 8 remains **In progress** overall. HR Admin can now list and create payrol
 UI; nothing else in the payroll frontend surface (detail, retry, generate, download, employee
 payslips) exists yet.
 
+### Phase 8D-2C — HR Admin payroll-run detail, retry, PDF generation, payslip table, and secure PDF download UI
+Status: **Complete.** Second and final HR Admin payroll page for this phase, built entirely on the
+existing `api/payroll.ts`/`api/errors.ts`/`utils/currency.ts`/`utils/payrollPeriod.ts` foundation.
+Employee-facing payroll UI, regeneration of already-`GENERATED` payslips, and automatic repair of
+a missing PDF file all remain unimplemented.
+
+- **`frontend/src/routes/admin/PayrollRunDetailPage.tsx`** (new) at `/admin/payroll/:id`, inside
+  the same `<ProtectedRoute allowedRoles={['HR_ADMIN']}>` boundary as every other admin route; the
+  existing `/admin/payroll` list route is untouched. The id from `useParams` is validated as a
+  positive integer client-side (`Number.isInteger(id) && id > 0`) before any network call --  an
+  invalid id (non-numeric, zero, negative, fractional) shows the fixed string "Payroll run not
+  found." and never calls `getPayrollRun`/`listPayrollRunPayslips`. A valid id fires both
+  `getPayrollRun(id)` and `listPayrollRunPayslips(id, 0, 10)` from two independent `useEffect`s
+  (genuine parallel requests, independent loading/error state per section) rather than one
+  `Promise.all` -- so a payslip-list failure never hides an already-loaded run summary, and vice
+  versa. A run-level 404 (`PAYROLL_RUN_NOT_FOUND`) is deliberately normalized to the same fixed
+  "Payroll run not found." string as the invalid-id case, rather than trusting whatever text the
+  backend's `detail` happens to contain for that code -- any other load failure falls back to
+  `extractErrorMessage`. Neither page ever calls `apiClient` directly, and there is no polling --
+  every backend mutation here is synchronous. A "&larr; Back to Payroll Runs" link returns to
+  `/admin/payroll`.
+- **Run summary** (semantic `dl`/`dt`/`dd`, matching `LeaveRequestDetailPage`'s convention): period
+  via `formatPayrollPeriod(periodMonth, periodYear)` (never `createdAt`, never a constructed
+  `Date`), a status badge for all four `PayrollRunStatus` values (visible text, not color-only,
+  same badge-style map as `PayrollRunListPage`), `failureReason` rendered only when truthy,
+  `createdAt`, `updatedAt`, `version`, and the four rate snapshots under an explicit "fixed
+  demonstration values, not statutory advice" label. Nothing on this page is editable -- no input,
+  textarea, or select renders in the summary at all -- and `pdfPath` is never referenced anywhere
+  in this file.
+- **State-dependent actions.** "Retry Payroll" renders only for `FAILED`; "Generate PDFs" only for
+  `CALCULATED`; neither renders for `PROCESSING` or `COMPLETED` -- inapplicable buttons are omitted
+  entirely, never rendered disabled. Both use an inline confirm/cancel state
+  (`'idle' | 'retry-confirm' | 'generate-confirm'`), the same pattern as
+  `LeaveRequestDetailPage`'s `ReviewMode`, with no modal library. Because the mode is a single
+  enum, the two confirmations can never be open simultaneously, and the trigger buttons themselves
+  are hidden whenever a confirmation is open. Each confirm action is guarded by an early-return
+  (`if (retrying/generating) return`) in addition to disabling the confirm/cancel buttons while in
+  flight. On success, both bump a single `refreshToken` state that both the run-summary effect and
+  the payslip-list effect depend on -- refetching each from the server rather than merging the
+  mutation's own response into local state, so the rendered status always reflects what the
+  backend actually persisted.
+  - **Retry**: recognized codes (`PAYROLL_RUN_NOT_FOUND`, `PAYROLL_RUN_NOT_FAILED`,
+    `PAYROLL_RUN_FAILED`) show the backend's safe `detail`; anything else shows a fixed fallback.
+    On an error, the confirmation stays open (mirroring `LeaveRequestDetailPage`'s
+    approve/reject-on-error behavior) rather than silently reverting to the idle trigger button,
+    so the user can retry the confirm click directly.
+  - **Generate**: consumes the exact `PayrollPdfGenerationResult` shape (`payrollRunId`, `status`,
+    `generatedCount`, `failedCount`, `skippedCount`). `failedCount === 0` renders a green
+    (`bg-emerald-50`) full-success banner; `failedCount > 0` renders a visually and textually
+    distinct amber (`bg-amber-50`) partial-success banner stating generated/failed/skipped counts
+    and explicitly noting "Generate PDFs" can be used again while the run remains `CALCULATED` --
+    the two banners never share a background class. Recognized codes
+    (`PAYROLL_RUN_NOT_FOUND`, `PAYROLL_RUN_NOT_CALCULATED`, `PAYROLL_RUN_HAS_NO_PAYSLIPS`,
+    `PAYROLL_PDF_STORAGE_UNAVAILABLE`) show the backend's safe detail; anything else shows a fixed
+    fallback. Because the post-success refetch reflects the server's real status, a run that comes
+    back `COMPLETED` naturally loses the "Generate PDFs" trigger through the same status-gated
+    render as every other status -- no separate idempotency special-case was needed.
+- **Payslip table**: `listPayrollRunPayslips(runId, page, 10)` starting at page 0, trusting backend
+  order with no client-side re-sort. Previous/Next are disabled at the first/last page and while
+  loading, with an `if (payslipLoading) return` early-return guard against duplicate in-flight
+  requests (mirroring `PayrollRunListPage`'s pagination guard). A retry/generate refresh preserves
+  the current payslip page; if the refreshed total page count makes that page invalid (e.g. the
+  run shrank from 3 pages to 1), the effect detects `page >= totalPages` and corrects to the last
+  valid page automatically rather than rendering an out-of-range empty page. Every monetary column
+  (`basePay`, `housingAllowance`, `transportAllowance`, `grossPay`, `epfDeduction`,
+  `socsoDeduction`, `eisDeduction`, `incomeTax`, `totalDeductions`, `netPay`) is formatted through
+  `formatMYR`; no value is computed or edited client-side, no current employee/department/salary
+  data is fetched, and `pdfPath` is never rendered or read.
+- **Secure PDF download.** Availability derives only from `pdfStatus`: `GENERATED` renders an
+  enabled "Download PDF" button; `PENDING`/`FAILED` render safe status text ("PDF not ready" /
+  "PDF generation failed") and never call `downloadPayslipPdf` at all. The only function called is
+  `downloadPayslipPdf(payslipId)` -- no `apiClient` call, no constructed path, no filename or
+  employee id passed from this page, no `window.open`. In-flight state is tracked with a
+  `Set<number>` of the currently-downloading payslip ids (plus a `Record<number, string>` of
+  per-row errors), not a single scalar: starting row A's download adds only A's id to the set;
+  starting row B's download while A is still pending adds B's id too, without ever displacing A's
+  -- both rows independently show "Downloading..." and are disabled at the same time. Completing
+  or failing A removes only A's id (`setDownloadingIds` always builds a new `Set` from the
+  previous one rather than mutating it, and only removes an id already present), so B remains
+  tracked, disabled, and showing "Downloading..." for exactly as long as its own request is
+  in flight -- unaffected by A settling first or later. A same-row click while that row's id is
+  still in the set is an early-return no-op, verified for both a single pending row and for a row
+  whose sibling is concurrently downloading. This corrects an earlier version of this page that
+  used a single `downloadingId: number | null` -- starting a second row's download overwrote that
+  scalar, which mis-rendered the first row as idle/enabled while its request was still genuinely
+  pending and reopened its early-return guard to a duplicate call; a RED-first test using two
+  independently controlled pending Promises (one per row) reproduced this exact failure before the
+  fix, and the pre-existing single-row duplicate-download test was kept unweakened alongside it.
+  Every other row remains independently usable throughout -- no single-download-at-a-time policy
+  was adopted. Download failures go
+  through `extractBlobProblemDetails`: recognized codes (`PAYSLIP_NOT_FOUND`,
+  `PAYSLIP_PDF_NOT_AVAILABLE`, `PAYSLIP_PDF_FILE_MISSING`, `PAYROLL_PDF_STORAGE_UNAVAILABLE`) show
+  the parsed safe `detail` when present, else a fixed code-specific fallback; every other case
+  (malformed JSON, non-JSON Blob, unrecognized code) shows "Could not download payslip PDF. Please
+  try again." Since only `code`/`detail` are ever read out of the parsed Blob (verified by
+  `extractBlobProblemDetails`'s own type-checked extraction), no other property a backend response
+  might contain -- a path, a stack trace, PDFBox internals -- can ever reach the screen. Per-row
+  errors render with `role="alert"`.
+- **Accessibility/responsiveness**: semantic `h1`/`h2` headings, `dl`/`dt`/`dd` for the summary,
+  semantic `<table>` with an `sr-only` caption for the payslip list, `overflow-x-auto` wrapper
+  (the payslip table is wide -- 16 columns), `role="alert"` for every error, `aria-live="polite"`
+  for retry success and both generate-result banners, explicit labelled confirm/cancel buttons,
+  and disabled-while-in-flight state everywhere a mutation or download is pending. No new icon or
+  UI-component library was added.
+- **RED-first evidence.** `PayrollRunDetailPage.test.tsx` (59 tests) was run against a nonexistent
+  file first (import-resolution failure), then the page was implemented and iterated to green;
+  three real defects were caught this way (systematic-debugging) rather than assumed away: (1)
+  React Testing Library's default text normalizer collapses the U+00A0 that `formatMYR` emits into
+  a regular space before matching, so a test comparing rendered text against `formatMYR`'s raw
+  (NBSP-containing) output could never match -- fixed by normalizing the expected string the same
+  way in the test, not by changing `formatMYR` itself; (2) an initial "page remains usable after a
+  retry error" test assumed the confirmation UI would revert to the idle trigger button on error,
+  but the actual (and `LeaveRequestDetailPage`-consistent) behavior deliberately keeps the
+  confirmation open so the user can retry directly -- the test was corrected to assert the confirm
+  button re-enables and a second confirm click succeeds, rather than changing production code to
+  match a wrong assumption; (3) a same-day correction pass found the `downloadingId: number | null`
+  scalar could not represent two concurrent row downloads (see "Secure PDF download" above) -- a
+  new test using two independently controlled pending Promises reproduced the exact failure
+  (clicking row B's Download PDF made row A's button revert to enabled "Download PDF" while A's
+  request was still genuinely pending) before the `Set<number>` fix was applied, and the
+  pre-existing single-row duplicate-download test was verified to still pass unweakened alongside
+  it. `App.test.tsx` gained three new `/admin/payroll/:id` routing tests (unauthenticated ->
+  redirected to login, EMPLOYEE -> blocked, HR_ADMIN -> sees the loading state before the route
+  existed, i.e. falls through to the 404 page), the HR_ADMIN case RED before the route was added to
+  `App.tsx`; the pre-existing `/admin/payroll` list-route test was left unmodified and continues to
+  pass, confirming no regression to Phase 8D-2B.
+- **Incidental full-suite flakiness (diagnosed, not a regression; same root cause as Phase
+  8D-2B).** A full `vitest run` can still report spurious timeouts across unrelated pre-existing
+  test files when the user's own dev-server processes are running concurrently on the same
+  machine. `vitest run --no-file-parallelism` (touches no other process) was used again to get a
+  stable, contention-free read; no production code was changed in response to this environmental
+  signal.
+- Frontend: 62 new tests (291 total, up from 229) -- 59 in the new
+  `PayrollRunDetailPage.test.tsx` (including the concurrent-download correction test) and 3 new
+  routing tests in `App.test.tsx`. All 291 pass; 0 failures; 0 skipped. `npm run build`
+  (`tsc -b && vite build`) succeeds. Backend was not touched
+  (`git status` shows zero `backend/` entries), no database or service was touched, no dependency
+  or lockfile changed, and no generated/downloaded PDF or temp file remains anywhere in the
+  repository.
+- **Explicitly unimplemented, deferred to later:** every employee-facing payroll page/route, a
+  regeneration control for an already-`GENERATED` payslip, automatic repair of a payslip whose PDF
+  file is missing, and any change to a payroll amount, rate, snapshot, status, or PDF path.
+
+Phase 8 remains **In progress** overall. HR Admin now has the complete list -> detail -> retry ->
+generate -> download workflow in the UI; only the employee-facing payslip pages remain before the
+payroll frontend surface is complete.
+
 ## Phases 9–13
 Status: Not started.
