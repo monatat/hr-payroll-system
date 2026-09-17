@@ -1758,5 +1758,101 @@ yet. Backend, database, and dependencies were not touched.
 Phase 8 remains **In progress** overall. The frontend now has its payroll data/API/formatting
 foundation, but no payroll page, route, or sidebar entry exists yet.
 
+### Phase 8D-2B — HR Admin payroll-run list and create-run UI
+Status: **Complete.** First real payroll page, built entirely on the Phase 8D-2A2 API/formatting
+foundation. The `/admin/payroll/{id}` detail route, retry, PDF generation, payslip tables/
+downloads, and every employee-facing payroll UI remain unimplemented -- this sub-phase is list +
+create only.
+
+- **`frontend/src/routes/admin/PayrollRunListPage.tsx`** (new) replaces the `/admin/payroll`
+  `PlaceholderPage` route in `App.tsx`. Uses only `listPayrollRuns`/`createPayrollRun` from
+  `api/payroll.ts` -- the page never calls `apiClient` directly. Loads page 0/size 10 on mount
+  with both filters omitted entirely from the request object (not sent as `undefined`), matching
+  the exact same per-module `cleanParams`-style omission convention already established in
+  `api/payroll.ts` itself. Selecting a status or entering a year filter resets to page 0.
+  Previous/Next are disabled at the first/last page and while a request is in flight, and an
+  early-return guard (`if (loading) return`) in the page-change handler additionally prevents a
+  second in-flight request even if a disabled button were somehow still triggered. Backend
+  ordering is trusted as-is -- rows render in the exact order `listPayrollRuns` returns them, with
+  no client-side sort. Each row shows the period via `formatPayrollPeriod`, a status badge, and the
+  creation timestamp reformatted with plain string slicing (`value.replace('T', ' ').slice(0,
+  16)`) rather than a `Date` object -- consistent with `payrollPeriod.ts`'s timezone-safety
+  rationale, even though `createdAt` itself has no timezone ambiguity to resolve. A "View" link
+  points to `/admin/payroll/{id}`, a route intentionally left unimplemented in this sub-phase. The
+  table exposes only period/status/created/actions -- no rate snapshot, monetary amount, payslip,
+  or `pdfPath` ever appears in this list.
+- **Status badges** cover all four `PayrollRunStatus` values (`PROCESSING`, `CALCULATED`,
+  `COMPLETED`, `FAILED`) with distinct Tailwind background/text color pairs, each rendering the
+  status name as visible text (never color-only) -- no new component library or icon dependency.
+- **Inline create-run form** (no modal library): a "Create Payroll Run" button reveals a form with
+  a 12-option named-month `<select>` and a year `<input type="number" min="2000" max="2100">`;
+  "Cancel" hides it again and clears its fields/error. The form carries `noValidate` so the
+  browser's native min/max constraint validation never silently blocks submission before this
+  page's own JS validation runs (found during RED-first testing -- see below). Submission is
+  guarded twice against duplicates: an early `if (creating) return` at the top of the handler, and
+  `disabled` on every form control while submitting. Client-side validation (month integer 1-12,
+  year integer 2000-2100) runs before any network call; an invalid value shows a `role="alert"`
+  message and never calls `createPayrollRun`. On success: a `aria-live="polite"` success message
+  appears, the form resets and collapses, the page resets to 0, and the list re-fetches via a
+  `refreshToken` dependency bump (needed because `setPage(0)` alone is a no-op when the page is
+  already 0 and would otherwise silently skip the refetch). The page never navigates to the detail
+  route automatically. The actor/user is never derived in the browser -- `createPayrollRun` sends
+  only `{ month, year }`, exactly as `api/payroll.ts` already enforces.
+- **Stable error-code handling** via `extractErrorCode`/`extractErrorMessage`: for
+  `PAYROLL_RUN_PERIOD_ALREADY_EXISTS` and `PAYROLL_RUN_FAILED` (both confirmed against the actual
+  backend `PayrollExceptionHandler`, which guarantees `detail` is always a pre-sanitized safe
+  message for these two codes), the backend's own `detail` is shown via `extractErrorMessage` with
+  a sensible fallback string. For any other/unrecognized code, the backend's `detail` is
+  deliberately **never** read at all -- a fixed generic fallback ("Could not create payroll run.
+  Please try again.") is shown instead, since an unexpected code has no guarantee its detail is
+  safe to display. The form remains fully usable after any failure (fields, selection, and the
+  visible form all persist; only `creating` and the error message change).
+- **Route and sidebar.** `App.tsx`'s existing HR_ADMIN-only `/admin/payroll` `ProtectedRoute`
+  boundary is preserved unchanged -- only the rendered element changed from `PlaceholderPage` to
+  `PayrollRunListPage`. `Sidebar.tsx` gains `{ label: 'Payroll', to: '/admin/payroll' }` in
+  `HR_ADMIN_ITEMS` (no icon, no employee-side item), and the stale comment listing `/admin/payroll`
+  as an unfinished placeholder was corrected. No employee route or sidebar item was touched.
+- **RED-first evidence.** `PayrollRunListPage.test.tsx` was written first against a nonexistent
+  file (import-resolution failure), then the page was implemented and iterated to green; three
+  real defects were caught and fixed this way rather than being designed away in advance
+  (systematic-debugging): (1) the year input's native `min`/`max` HTML5 constraint validation
+  silently blocked the `submit` event before this page's own JS validation could run or set any
+  error state -- fixed by adding `noValidate` to the `<form>`; (2) an extra "Select a month"
+  placeholder option made the month `<select>` have 13 options instead of the required 12 -- fixed
+  by removing the placeholder and defaulting `month` to `'1'`; (3) an initial "duplicate click"
+  test raced against an instantly-resolving mock (each `await user.click` fully settles, including
+  the mocked request, before the next click fires), so it was actually asserting on two
+  legitimate, non-overlapping page loads rather than a real double-submission -- fixed by rewriting
+  the test with a controllable pending Promise so the second click genuinely lands while the first
+  request is still in flight and the button is disabled. `AppLayout.test.tsx`'s admin sidebar
+  enumeration test and href-list test were extended (RED first: `Payroll` link not found) before
+  `Sidebar.tsx` was changed. `App.test.tsx` gained three new `/admin/payroll` routing tests
+  (unauthenticated -> redirected to login, EMPLOYEE -> blocked, HR_ADMIN -> sees "Payroll Runs"),
+  the last of which was RED (heading still read "Payroll", the placeholder's title) before
+  `App.tsx`'s route element was swapped.
+- **Incidental full-suite flakiness (diagnosed, not a regression).** A full `vitest run` sometimes
+  reported spurious timeouts across several unrelated, pre-existing test files (never in the files
+  changed this sub-phase). Root-caused via `Get-CimInstance Win32_Process` inspection: several of
+  the user's own legitimate dev-server processes (`npm run dev -w backend`, `npm run dev -w
+  frontend`, plus an unrelated project's `tsx watch`/`vite` processes) were running concurrently on
+  the same machine, competing for CPU with Vitest's ~19 spawned worker processes and inflating
+  worker-startup time roughly 4-5x. A clean `vitest run --no-file-parallelism` (which does not
+  touch or stop any other process) reproduced 229/229 green, confirming the failures were
+  environmental contention, not a code defect -- no production code was changed in response to
+  this false signal.
+- Frontend: 33 new tests (229 total, up from 196) -- 29 in the new `PayrollRunListPage.test.tsx`,
+  1 new sidebar-navigation test plus 2 existing tests extended (not counted as new) in
+  `AppLayout.test.tsx`, and 3 new routing tests in `App.test.tsx`. All 229 pass; 0 failures; 0
+  skipped. `npm run build` (`tsc -b && vite build`) succeeds. Backend was not touched (`git status`
+  shows zero `backend/` entries), no database or service was touched, no dependency or lockfile
+  changed, and no generated/downloaded PDF or temp file remains anywhere in the repository.
+- **Explicitly unimplemented, deferred to later:** the `/admin/payroll/{id}` detail page, retry,
+  PDF generation, payslip tables, PDF download buttons, every employee-facing payroll page, and any
+  employee sidebar change -- all still to come in a later sub-phase.
+
+Phase 8 remains **In progress** overall. HR Admin can now list and create payroll runs from the
+UI; nothing else in the payroll frontend surface (detail, retry, generate, download, employee
+payslips) exists yet.
+
 ## Phases 9–13
 Status: Not started.

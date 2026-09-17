@@ -7,9 +7,9 @@ type SidebarItem = {
   end?: boolean
 }
 
-// Only routes with a real, finished page belong here -- /admin/payroll,
-// /admin/reports, /employee/attendance, and /employee/payslips are still
-// unfinished placeholders (out of Phase 7D-3 scope). Entity-specific routes
+// Only routes with a real, finished page belong here -- /admin/reports,
+// /employee/attendance, and /employee/payslips are still unfinished
+// placeholders (out of Phase 7D-3/8D-2B scope). Entity-specific routes
 // (employee detail/edit/salary, leave-request detail) stay reachable only
 // through their parent list pages, not as their own sidebar entries.
 const HR_ADMIN_ITEMS: SidebarItem[] = [
@@ -17,6 +17,7 @@ const HR_ADMIN_ITEMS: SidebarItem[] = [
   { label: 'Manage Departments', to: '/admin/departments' },
   { label: 'Manage Employees', to: '/admin/employees' },
   { label: 'Leave Requests', to: '/admin/leave' },
+  { label: 'Payroll', to: '/admin/payroll' },
 ]
 
 const EMPLOYEE_ITEMS: SidebarItem[] = [
