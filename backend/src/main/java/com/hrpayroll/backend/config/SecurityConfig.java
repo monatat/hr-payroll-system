@@ -66,6 +66,9 @@ public class SecurityConfig {
         configuration.setAllowedOrigins(List.of(allowedOrigin));
         configuration.setAllowedMethods(List.of("GET", "POST", "PUT", "PATCH", "DELETE"));
         configuration.setAllowedHeaders(List.of("Authorization", "Content-Type"));
+        // Browser JS on the frontend origin cannot read Content-Disposition (e.g. the payslip PDF
+        // download's server-generated safe filename) unless it is explicitly exposed here.
+        configuration.setExposedHeaders(List.of("Content-Disposition"));
 
         UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
         source.registerCorsConfiguration("/api/**", configuration);

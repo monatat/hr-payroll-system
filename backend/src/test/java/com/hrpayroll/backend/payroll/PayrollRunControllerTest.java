@@ -500,7 +500,14 @@ class PayrollRunControllerTest {
                         .value(PayrollTestFixtures.EMPLOYEE_CODE_PREFIX + "Z-PS"))
                 .andExpect(jsonPath("$.content[0].netPay").value(1666.00))
                 .andExpect(jsonPath("$.content[0].pdfStatus").value("PENDING"))
-                .andExpect(jsonPath("$.content[0].pdfPath").doesNotExist());
+                .andExpect(jsonPath("$.content[0].pdfPath").doesNotExist())
+                // periodMonth/periodYear must come from the payslip's associated PayrollRun (month
+                // 8, OTHER_YEAR here) -- never from createdAt, which is "now" (a different
+                // month/year entirely) for every payslip inserted by this test.
+                .andExpect(jsonPath("$.content[0].periodMonth").value(8))
+                .andExpect(jsonPath("$.content[0].periodYear").value(OTHER_YEAR))
+                .andExpect(jsonPath("$.content[1].periodMonth").value(8))
+                .andExpect(jsonPath("$.content[1].periodYear").value(OTHER_YEAR));
     }
 
     @Test

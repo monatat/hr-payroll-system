@@ -153,6 +153,19 @@ class PayslipSelfServiceControllerTest {
     }
 
     @Test
+    void responseIncludesPeriodMonthAndPeriodYearFromTheAssociatedRunNotCreatedAt() throws Exception {
+        // Period (month 1, YEAR) is deliberately unrelated to createdAt (June 2026) -- a payroll
+        // run can be created well after (or before) the period it covers, so periodMonth/
+        // periodYear must come from the payslip's associated PayrollRun, never from createdAt.
+        insertPayslipFor(ownEmployeeId, "SELF", 1, LocalDateTime.of(2026, 6, 15, 10, 0));
+
+        mockMvc.perform(get("/api/employees/me/payslips").header(HttpHeaders.AUTHORIZATION, "Bearer " + employeeToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content[0].periodMonth").value(1))
+                .andExpect(jsonPath("$.content[0].periodYear").value(YEAR));
+    }
+
+    @Test
     void responseContainsNoPdfPath() throws Exception {
         insertPayslipFor(ownEmployeeId, "SELF", 9, LocalDateTime.now());
 

@@ -130,7 +130,11 @@ class PayslipControllerTest {
                 .andExpect(jsonPath("$.totalDeductions").value(951.90))
                 .andExpect(jsonPath("$.netPay").value(4748.10))
                 .andExpect(jsonPath("$.pdfStatus").value("PENDING"))
-                .andExpect(jsonPath("$.pdfPath").doesNotExist());
+                .andExpect(jsonPath("$.pdfPath").doesNotExist())
+                // periodMonth/periodYear must come from the associated PayrollRun (month 1, YEAR
+                // here), never from createdAt (LocalDateTime.now() -- a different month/year).
+                .andExpect(jsonPath("$.periodMonth").value(1))
+                .andExpect(jsonPath("$.periodYear").value(YEAR));
     }
 
     @Test
@@ -153,7 +157,9 @@ class PayslipControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.employeeCodeSnapshot").value(PayrollTestFixtures.EMPLOYEE_CODE_PREFIX + "OWN"))
                 .andExpect(jsonPath("$.netPay").value(4748.10))
-                .andExpect(jsonPath("$.pdfPath").doesNotExist());
+                .andExpect(jsonPath("$.pdfPath").doesNotExist())
+                .andExpect(jsonPath("$.periodMonth").value(1))
+                .andExpect(jsonPath("$.periodYear").value(YEAR));
     }
 
     @Test

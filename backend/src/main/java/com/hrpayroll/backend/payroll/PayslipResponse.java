@@ -4,9 +4,11 @@ import java.math.BigDecimal;
 import java.time.LocalDateTime;
 
 /**
- * HR_ADMIN-facing payslip DTO, built entirely from the entity's own stored snapshot/monetary
- * fields -- never by re-reading current Employee/Department/SalaryStructure state. Deliberately
- * excludes {@code pdfPath}: no download link exists in this sub-phase.
+ * Payslip DTO (HR_ADMIN and EMPLOYEE-owner facing), built entirely from the entity's own stored
+ * snapshot/monetary fields -- never by re-reading current Employee/Department/SalaryStructure
+ * state. Deliberately excludes {@code pdfPath}: no raw filesystem path is ever serialized.
+ * {@code periodMonth}/{@code periodYear} come from the associated {@link PayrollRun}, not
+ * {@code createdAt} -- a run can be created well after (or before) the period it covers.
  */
 public record PayslipResponse(
         Long id,
@@ -27,7 +29,9 @@ public record PayslipResponse(
         BigDecimal totalDeductions,
         BigDecimal netPay,
         PdfStatus pdfStatus,
-        LocalDateTime createdAt) {
+        LocalDateTime createdAt,
+        Integer periodMonth,
+        Integer periodYear) {
 
     public static PayslipResponse from(Payslip payslip) {
         return new PayslipResponse(
@@ -49,6 +53,8 @@ public record PayslipResponse(
                 payslip.getTotalDeductions(),
                 payslip.getNetPay(),
                 payslip.getPdfStatus(),
-                payslip.getCreatedAt());
+                payslip.getCreatedAt(),
+                payslip.getPayrollRun().getPeriodMonth(),
+                payslip.getPayrollRun().getPeriodYear());
     }
 }

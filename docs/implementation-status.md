@@ -1560,5 +1560,82 @@ of a GENERATED payslip whose physical file is missing.
   client, automatic repair of a GENERATED payslip whose physical file is missing, scheduler/Spring
   Batch, attendance/leave/overtime/proration integration, and V14/any migration.
 
+### Phase 8D-2A1 — Backend browser-contract corrections for the payroll frontend
+Status: **Complete.** Two narrow gaps found during the Phase 8D-1 frontend-integration audit,
+fixed backend-only, before any frontend implementation begins. No new endpoint, no new database
+column, no migration, no payroll-calculation or PDF-generation change.
+
+- **`periodMonth`/`periodYear` added to `PayslipResponse`.** The response previously had no field
+  identifying which payroll month/year a payslip belongs to. `createdAt` cannot substitute for
+  this: a payroll run can be created well after (or before) the period it actually covers, so
+  `createdAt` reflects *when the row was written*, not the payroll period. The Employee-facing
+  `GET /api/employees/me/payslips` endpoint has no other way to learn the period either --
+  `GET /api/payroll-runs/{id}` is HR_ADMIN-only (`@PreAuthorize`), so an authenticated employee's
+  browser session cannot fetch the associated run directly to read its period. Both new fields are
+  populated from the payslip's own associated `PayrollRun` snapshot
+  (`payslip.getPayrollRun().getPeriodMonth()/getPeriodYear()`), never derived from `createdAt` and
+  never constructed via `java.util.Date`. This is purely additive: every existing field is
+  unchanged, `pdfPath` remains excluded, and the only construction site (`PayslipResponse.from`)
+  was the sole call site verified via `grep`.
+  - **Lazy-loading/N+1 check (no fix needed):** all three query paths that build a
+    `PayslipResponse` -- `PayslipRepository.findWithDetailsById` (`GET /api/payslips/{id}`),
+    `findByPayrollRunId` (`GET /api/payroll-runs/{id}/payslips`), and `findByEmployeeId`
+    (`GET /api/employees/me/payslips`) -- already `JOIN FETCH p.payrollRun JOIN FETCH p.employee`.
+    Confirmed by direct source inspection before writing any test or production code; no
+    repository change was made, and no eager mapping was added elsewhere.
+- **`Content-Disposition` exposed via CORS.** `SecurityConfig.corsConfigurationSource()` had no
+  `setExposedHeaders(...)` call at all, so although the PDF-download endpoint
+  (`GET /api/payslips/{id}/pdf`) already returned a server-generated safe `Content-Disposition`
+  filename, browser JavaScript running on the configured frontend origin
+  (`app.cors.allowed-origin`, default `http://localhost:5173`) could not read that header --
+  browsers only expose a fixed "safe" header allowlist to script unless the server explicitly
+  opts a header in via `Access-Control-Expose-Headers`. Fixed by adding exactly one entry:
+  `configuration.setExposedHeaders(List.of("Content-Disposition"));`. No other CORS permission was
+  touched or loosened: allowed origins, allowed methods (`GET, POST, PUT, PATCH, DELETE`), and
+  allowed request headers (`Authorization, Content-Type`) are all unchanged; `Authorization` is
+  still never exposed; no wildcard (`"*"`) is used anywhere in the exposed-header list; credential
+  behavior is unchanged (this app never sets `setAllowCredentials`).
+- **RED-first tests.** Group 1 (serialization) extended three existing real-PostgreSQL controller
+  test methods across `PayrollRunControllerTest`, `PayslipControllerTest` (two methods), and one
+  new test method in `PayslipSelfServiceControllerTest`
+  (`responseIncludesPeriodMonthAndPeriodYearFromTheAssociatedRunNotCreatedAt`), each using a period
+  month/year deliberately different from the row's `createdAt` timestamp, to prove the served
+  values come from the `PayrollRun`, never `createdAt`. All four assertions were run against
+  unmodified code first and failed for the expected reason (`PathNotFoundException` /
+  `No value at JSON path "...periodMonth"`), confirming RED before any production change. Group 2
+  (CORS) is a new test class, `PayslipPdfDownloadCorsTest` (3 tests), reusing the existing
+  `@TempDir`/`@DynamicPropertySource`/`ControllablePayslipPdfRenderer` fixture pattern from
+  `PayslipPdfDownloadControllerTest` to generate a real PDF, then asserting on
+  `Access-Control-Allow-Origin`, `Access-Control-Expose-Headers`, and `Content-Disposition` for an
+  `Origin` header equal to the actual configured `app.cors.allowed-origin` value (read via
+  `@Value`, never hard-coded) and for a disallowed origin. Two of the three failed against
+  unmodified code for the expected reason (missing `Access-Control-Expose-Headers`); the
+  disallowed-origin test passed unmodified, confirming that existing origin-rejection behavior
+  needed no change. After both production edits, all four Group 1 assertions and all three Group 2
+  tests pass; every other test in the three edited files and in `PayslipPdfDownloadControllerTest`/
+  `PayrollRunGeneratePdfsControllerTest` continues to pass unmodified, confirming no regression to
+  payslip ownership (HR_ADMIN any, EMPLOYEE own-only, non-owner 404 not 403), PDF-download
+  authentication, or the existing PDF response headers (`Content-Type: application/pdf`,
+  `Content-Disposition: attachment`, `Content-Length`, `Cache-Control: private, no-store`).
+- Backend: 4 new tests (436 total, up from 432) -- 1 new method in
+  `PayslipSelfServiceControllerTest` and 3 in the new `PayslipPdfDownloadCorsTest`; the other three
+  Group-1 assertions extended existing test methods without adding new test-method count.
+  `./mvnw.cmd clean verify` passes (436 run, 0 failures, 0 errors, 3 skipped -- the same 3
+  pre-existing symlink-unsupported-OS skips as the Phase 8C baseline, none added or removed);
+  console and Surefire-XML-derived totals cross-checked and identical; Flyway remains at schema
+  version 13 (no migration in this sub-phase); PDFBox remains `3.0.8`; `payroll_runs`/`payslips`
+  confirmed empty (0 rows) after the full suite run; demo/manual data unchanged; neither
+  `data/payroll-pdfs` nor `backend/data/payroll-pdfs` exists anywhere in the repository; no
+  generated PDF or temp file remains anywhere in the repository; `git diff --check` reports no
+  whitespace errors. Frontend was not touched (zero `frontend/` entries in `git status`) and its
+  test suite/build were not re-run; frontend implementation has still not started.
+- **Explicitly unimplemented, deferred to later:** every item unimplemented as of Phase 8C-2B2
+  (frontend pages/buttons/routes/sidebar/API client, automatic PDF-file repair, scheduler/Spring
+  Batch, attendance/leave/overtime/proration integration, V14/any migration) remains deferred; this
+  sub-phase adds no new deferred item.
+
+Phase 8 remains **In progress** overall (frontend implementation for payroll/payslips has not yet
+started).
+
 ## Phases 9–13
 Status: Not started.
