@@ -153,6 +153,29 @@ describe('App', () => {
     expect(screen.queryByText(/placeholder screen/i)).not.toBeInTheDocument()
   })
 
+  it('redirects an unauthenticated visitor away from /employee/payslips/:id to login', () => {
+    renderApp('/employee/payslips/1')
+
+    expect(screen.getByRole('heading', { name: 'Sign in' })).toBeInTheDocument()
+  })
+
+  it('blocks an authenticated HR_ADMIN from /employee/payslips/:id', () => {
+    sessionStorage.setItem('hr_payroll_access_token', fakeToken('HR_ADMIN'))
+
+    renderApp('/employee/payslips/1')
+
+    expect(screen.getByRole('heading', { name: 'Not authorized' })).toBeInTheDocument()
+  })
+
+  it('allows an authenticated EMPLOYEE into the real /employee/payslips/:id detail route', () => {
+    sessionStorage.setItem('hr_payroll_access_token', fakeToken('EMPLOYEE', 7))
+
+    renderApp('/employee/payslips/1')
+
+    expect(screen.getByText(/loading/i)).toBeInTheDocument()
+    expect(screen.queryByText('404 — Page not found')).not.toBeInTheDocument()
+  })
+
   it('redirects an unauthenticated visitor away from /admin/leave to login', () => {
     renderApp('/admin/leave')
 

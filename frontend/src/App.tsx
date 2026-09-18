@@ -14,6 +14,7 @@ import { PayrollRunListPage } from './routes/admin/PayrollRunListPage'
 import { SalaryHistoryPage as AdminSalaryHistoryPage } from './routes/admin/SalaryHistoryPage'
 import { EmployeeProfilePage } from './routes/employee/EmployeeProfilePage'
 import { LeaveDashboardPage } from './routes/employee/LeaveDashboardPage'
+import { PayslipDetailPage } from './routes/employee/PayslipDetailPage'
 import { PayslipListPage } from './routes/employee/PayslipListPage'
 import { SalaryHistoryPage as EmployeeSalaryHistoryPage } from './routes/employee/SalaryHistoryPage'
 import { LoginPage } from './routes/LoginPage'
@@ -169,6 +170,14 @@ function App() {
           element={
             <ProtectedRoute allowedRoles={['EMPLOYEE']}>
               <PayslipListPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/employee/payslips/:id"
+          element={
+            <ProtectedRoute allowedRoles={['EMPLOYEE']}>
+              <PayslipDetailPage />
             </ProtectedRoute>
           }
         />

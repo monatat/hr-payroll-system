@@ -2076,5 +2076,95 @@ Phase 8 remains **In progress** overall. Both HR Admin and Employee now have a w
 list surface in the UI; only the employee payslip detail/download page remains before the payroll
 frontend is feature-complete for this phase.
 
+### Phase 8D-2D2 — Employee payslip detail and secure PDF download UI
+Status: **Complete.** Final planned page of the Phase 8D frontend work: a read-only detail view
+plus authenticated PDF download for the employee's own payslip. Manual browser testing (across
+real roles/devices, not just the Vitest/RTL suite) remains deferred to Phase 8D-3.
+
+- **`frontend/src/routes/employee/PayslipDetailPage.tsx`** (new) at `/employee/payslips/:id`,
+  inside the existing `<ProtectedRoute allowedRoles={['EMPLOYEE']}>` boundary; the existing
+  `/employee/payslips` list route and every HR Admin payroll route are untouched. The id is
+  validated client-side as a positive integer (`Number.isInteger(id) && id > 0`) before any
+  network call -- an invalid id (non-numeric, zero, negative, fractional) shows the fixed
+  "Payslip not found." and calls neither `getPayslip` nor `downloadPayslipPdf`. A "&larr; Back to
+  My Payslips" link returns to `/employee/payslips`.
+- **Ownership enforcement is entirely backend-side.** This page never reads `AuthContext` for an
+  identity, never decodes the JWT, and performs no client-side ownership check of any kind --
+  confirmed against `PayslipController.java` before writing this page: neither
+  `GET /api/payslips/{id}` nor `GET /api/payslips/{id}/pdf` carries a `@PreAuthorize`; both derive
+  the caller from `@AuthenticationPrincipal AuthenticatedUser`, and a non-owning EMPLOYEE receives
+  the identical `404 PAYSLIP_NOT_FOUND` as an unknown id. The page collapses both cases (and every
+  invalid-id case) to the single fixed string "Payslip not found." -- the backend's own `detail`
+  text is deliberately never displayed for this code, or for any other initial-load failure (which
+  instead show a fixed "Could not load your payslip. Please try again."), so no error can ever
+  reveal which of the two cases occurred, or any employee identity, salary value, path, or
+  exception detail.
+- **Detail presentation**: semantic `h1`/`h2` headings with `dl`/`dt`/`dd` groups for Summary
+  (PDF Status, Created At -- period is the page's own `h1`, via `formatPayrollPeriod(periodMonth,
+  periodYear)`, never derived from `createdAt`), Employee snapshot (Employee Code/Name,
+  Department, Job Title), Earnings (Base Pay, Housing Allowance, Transport Allowance, Gross Pay),
+  and Deductions (EPF/SOCSO/EIS Deduction, Income Tax, Total Deductions), all sourced only from
+  the stored `Payslip` snapshot fields the backend already returns -- no current
+  Employee/Department/SalaryStructure record is fetched. Every monetary field uses `formatMYR`;
+  Net Pay is rendered from the payslip's own stored value (verified directly: a payslip whose
+  `grossPay - totalDeductions` would arithmetically differ from its stored `netPay` still renders
+  the stored value, proving no client-side recomputation) in a visually larger/bolder `dd` while
+  remaining the same semantic definition-list value. `payrollRunId`, `employeeId`, and `pdfPath`
+  are never rendered anywhere on the page, and no input/select/textarea exists.
+- **PDF-status-gated availability**, derived only from `pdfStatus`: `GENERATED` renders an enabled
+  "Download PDF" button; `PENDING` renders "Your payslip PDF is not ready yet." with no button;
+  `FAILED` renders "Your payslip PDF could not be generated. Please contact HR." with no button.
+  Neither `PENDING` nor `FAILED` ever calls `downloadPayslipPdf`.
+- **Secure authenticated download** via `downloadPayslipPdf(payslipId)` only -- no `apiClient`
+  call, no `window.open`, no constructed URL, no filename/path accepted from the page or user, and
+  no employee/payroll-run id sent (the existing `apiClient` request interceptor supplies the
+  Bearer token). Because this page shows exactly one payslip, in-flight state is a single
+  `downloading` boolean (per this sub-phase's explicit instruction not to introduce the
+  concurrent-row `Set` state `PayrollRunDetailPage` needed for its multi-row table) guarded by an
+  early `if (downloading) return` plus a disabled button reading "Downloading..." while pending.
+  Success restores "Download PDF" and clears any earlier error; failure also restores the button
+  and leaves the page fully usable for another attempt -- verified directly with a failed attempt
+  followed by an immediate successful retry.
+- **Blob ProblemDetail handling** via `extractBlobProblemDetails`, with per-code fallbacks used
+  only when the parsed `detail` is absent or blank (`detail && detail.trim() !== '' ? detail :
+  fallback`, a stricter empty-string check than `PayrollRunDetailPage`'s `?? fallback`, matching
+  this sub-phase's explicit "present and non-empty" requirement): `PAYSLIP_NOT_FOUND` -> "Payslip
+  not found."; `PAYSLIP_PDF_NOT_AVAILABLE` -> "Your payslip PDF is not available.";
+  `PAYSLIP_PDF_FILE_MISSING` -> "The payslip PDF file is unavailable. Please contact HR.";
+  `PAYROLL_PDF_STORAGE_UNAVAILABLE` -> "The payslip PDF service is unavailable. Please try again
+  later." Any unrecognized code, malformed JSON, non-JSON Blob, empty Blob, or unexpected
+  (non-Blob) error shape shows exactly "Could not download payslip PDF. Please try again." Since
+  `extractBlobProblemDetails` only ever extracts type-checked `code`/`detail` strings, no other
+  property a response might carry (a path, a stack trace, PDFBox internal text) can reach the
+  screen -- verified directly with a Blob containing a planted `path` field alongside a legitimate
+  `detail`, confirming only the `detail` renders.
+- **Accessibility/responsiveness**: `role="alert"` for every load and download error, visible text
+  for all three PDF statuses (never color-only), disabled-while-downloading plus the early-return
+  guard, an accessible "Download PDF"/"Downloading..." button label, and the existing responsive
+  Tailwind conventions (`mx-auto max-w-2xl`, stacked `dl` grids) already used by
+  `LeaveRequestDetailPage`/`PayrollRunDetailPage` -- no new icon or UI-component dependency.
+- **RED-first evidence.** `PayslipDetailPage.test.tsx` (48 tests) was run against a nonexistent
+  file first (import-resolution failure); the implementation then passed all 48 on the first
+  attempt once written against the already-confirmed `getPayslip`/`downloadPayslipPdf`/
+  `extractBlobProblemDetails`/`extractErrorCode` contracts and the `PayrollRunDetailPage`/
+  `LeaveRequestDetailPage` conventions established in earlier sub-phases. `App.test.tsx` gained
+  three new `/employee/payslips/:id` routing tests (unauthenticated -> redirected to login,
+  HR_ADMIN -> blocked, EMPLOYEE -> sees the real page's loading state rather than the 404 page),
+  all three RED (falling through to the catch-all `NotFoundPage`) before the route was added to
+  `App.tsx`; the pre-existing `/employee/payslips` list-route test and every HR Admin payroll
+  routing test were left unmodified and continue to pass, confirming no regression.
+- Frontend: 51 new tests (372 total, up from 321) -- 48 in the new `PayslipDetailPage.test.tsx`
+  and 3 new routing tests in `App.test.tsx`. All 372 pass; 0 failures; 0 skipped. `npm run build`
+  (`tsc -b && vite build`) succeeds. Backend was not touched (`git status` shows zero `backend/`
+  entries), no database or service was touched, no dependency or lockfile changed, and no
+  generated/downloaded PDF or temp file remains anywhere in the repository.
+- **Explicitly unimplemented, deferred to later:** manual cross-browser/cross-device testing of
+  the full payroll frontend surface (Phase 8D-3), any HR Admin payroll change, and any
+  regeneration/automatic-repair control for a payslip's PDF.
+
+Phase 8 remains **In progress** overall. Both HR Admin and Employee now have a complete
+list/detail/action UI surface for payroll; only manual end-to-end browser verification (Phase
+8D-3) remains before this phase can be marked fully complete.
+
 ## Phases 9–13
 Status: Not started.
