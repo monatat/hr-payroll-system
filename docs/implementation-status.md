@@ -2248,5 +2248,60 @@ failed-run retry and employee self-service read APIs (8B-2B), payslip PDF render
 generation orchestration and secure download (8C-2B1/8C-2B2), the full HR Admin and Employee
 payroll frontend (8D-2A1 through 8D-2D2), and manual end-to-end browser verification (8D-3).
 
-## Phases 9–13
+## Phase 9 — Employee self-service attendance
+Phase 9 is employee self-service attendance: clock-in, clock-out, and personal attendance
+history, for the EMPLOYEE role only. HR Admin attendance management is not part of Phase 9.
+Phase 10 (HR Admin reports) is a separate, later phase.
+
+### Phase 9A — Time strategy, entity, repository foundation
+Status: **Complete.** Foundation only -- no service, controller, DTO, exception, security
+annotation, audit event, or frontend code exists yet. The existing V7 `attendance` table (from
+early in the project, predating payroll) is reused completely unchanged; the audit proved every
+Phase 9A/9B requirement is satisfiable against it as-is, so no new migration was added.
+
+- **Explicit business-timezone `Clock` bean** -- `backend/src/main/java/.../config/TimeConfig.java`
+  provides `Clock.system(ZoneId.of("Asia/Kuala_Lumpur"))` as an ordinary (non-`@Primary`) bean, so
+  a later test can override it with `Clock.fixed(...)` the same way `PayrollPdfServiceTest`
+  overrides `PayslipPdfRenderer`. This matches the project's existing Asia/Kuala_Lumpur convention
+  (`application.yml`'s `spring.jackson.time-zone` and `HrPayrollBackendApplication`'s
+  `TimeZone.setDefault`) rather than introducing a new timezone decision, and is deliberately not
+  injected into any existing service -- leave/payroll/salary/employee/auth/PDF code is untouched.
+- **`Attendance` entity** (`backend/src/main/java/.../attendance/Attendance.java`) maps V7 exactly:
+  `id`, `employee` (`@ManyToOne` to the existing `Employee` entity via `employee_id`), `workDate`,
+  `clockInAt` (not-null), `clockOutAt` (nullable). No `createdAt`/`updatedAt`/`version` field --
+  V7 has none of those columns, unlike most other tables in this project. No setters; clock-in/
+  clock-out lifecycle methods belong to the future Phase 9B service.
+- **`AttendanceRepository`** provides only the two foundation queries later phases need:
+  `findByEmployeeIdAndWorkDate` (single lookup) and `findByEmployeeIdOrderByWorkDateDescIdDesc`
+  (paginated history, newest work date first with `id` as a deterministic tie-breaker baked into
+  the method name -- a deliberate deviation from `PayslipRepository`/`LeaveRequestRepository`'s
+  plain `findByEmployeeId` + caller-supplied `Sort`, since attendance history has exactly one
+  correct order and no reason for a future caller to override it). No conditional clock-out
+  update yet -- that belongs to Phase 9B alongside its own concurrency tests.
+- **Database-enforced invariants confirmed by real-PostgreSQL tests, not assumed**:
+  `uq_attendance_employee_work_date` rejects a duplicate employee/work-date pair (asserted by
+  exact constraint name), `chk_attendance_clock_out_after_clock_in` rejects a clock-out before
+  clock-in (asserted by exact constraint name, and a clock-out equal to clock-in is accepted),
+  `fk_attendance_employee` rejects both an unknown employee id on insert and deleting an employee
+  who still has attendance rows (`ON DELETE RESTRICT`).
+- **RED-first evidence.** `AttendanceRepositoryTest` and `TimeConfigTest` were run first against
+  the not-yet-existing `Attendance`/`AttendanceRepository`/`TimeConfig` classes (compile failure);
+  the entity/repository/config were then implemented to make all 13 focused tests pass on the
+  first attempt. History/pagination/isolation tests use `entityManager.clear()` before re-querying
+  to prove results come from PostgreSQL, not the first-level cache.
+- Backend: 13 new tests (449 total, up from 436) -- 11 in `AttendanceRepositoryTest`, 2 in
+  `TimeConfigTest`. `./mvnw.cmd clean verify` passes (449 run, 0 failures, 0 errors, 3 skipped --
+  the same 3 pre-existing symlink-unsupported-OS skips as the Phase 8 baseline, none added or
+  removed). No migration added (Flyway remains at schema version 13); no dependency changed;
+  frontend untouched (`git status` shows zero `frontend/` entries); the local development database
+  has zero leftover Phase 9 fixture rows after the test run's own cleanup.
+- **Explicitly unimplemented, deferred to Phase 9B and later:** `AttendanceService`, clock-in/
+  clock-out business logic (including the conditional clock-out update and its concurrency
+  tests), controllers/endpoints, DTOs, exceptions/exception handlers, security annotations, audit
+  events, the frontend API/page/route/sidebar, HR Admin attendance, and Phase 10 reports.
+
+Phase 9 remains **In progress** overall; only the non-HTTP entity/repository/time foundation
+exists so far.
+
+## Phases 10–13
 Status: Not started.
