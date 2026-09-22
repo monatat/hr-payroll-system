@@ -2166,5 +2166,87 @@ Phase 8 remains **In progress** overall. Both HR Admin and Employee now have a c
 list/detail/action UI surface for payroll; only manual end-to-end browser verification (Phase
 8D-3) remains before this phase can be marked fully complete.
 
+### Phase 8D-3 — Manual end-to-end browser verification of the payroll frontend
+Status: **Complete.** Full manual browser verification of the Phase 8D-2A2 through 8D-2D2 payroll
+frontend, performed by the user across real roles, browsers, and devices against a live
+backend/frontend/PostgreSQL stack. All fixtures were temporary (`MANUAL_8D3_20260918`-prefixed
+users, employees, salary structures, payroll runs, and their auto-generated payslips), tracked
+in an external cleanup ledger outside the repository, and fully removed after verification; no
+production source, test, migration, or configuration file was touched during this phase.
+
+The user manually confirmed **PASS** for:
+
+- Logged-out route protection (unauthenticated access redirected to login for every payroll
+  route, admin and employee).
+- HR_ADMIN/EMPLOYEE role-authorization boundaries (each role blocked from the other's payroll
+  routes).
+- Admin payroll-run list: filtering, year selection, and pagination behavior.
+- Create-run validation, including duplicate-period safe error handling (re-submitting an
+  existing period produced the expected conflict error with no duplicate row created).
+- FAILED run Retry Payroll: confirmation flow and successful recovery once salary coverage was
+  repaired.
+- CALCULATED run Generate PDFs: successful full-run PDF generation.
+- Controlled external-storage failure (via a reversible, OS-level, deny-only ACL change on the
+  dedicated external PDF storage directory -- never via source, config, or database edits): the
+  partial-warning presentation displayed, generated/failed/skipped counts displayed, affected
+  rows showed the PDF-generation failure, and Generate PDFs remained available for retry.
+- Storage-permission restoration and successful regeneration: after the deny rule was removed,
+  the same run reached `COMPLETED` with both payslips `GENERATED` and real PDF files on disk
+  (verified directly: run 2006 reached `COMPLETED` at version 2, payslips 1140/1141 both reached
+  `GENERATED` with non-empty `pdf_path` values, and both PDF files existed inside the dedicated
+  external storage directory with non-zero size).
+- Admin PDF download, opening, and content verification (downloaded PDF content matched the
+  expected employee/period).
+- Employee A self-service payslip list, detail, and download.
+- Employee B self-service payslip list, detail, and download.
+- Unknown and non-owned payslip ids showing the identical fixed "Payslip not found." message
+  (no distinguishing information leaked between the two cases).
+- Invalid payslip ids (non-numeric, zero, negative, fractional) handled client-side with no
+  network call.
+- Responsive behavior at desktop, tablet, and mobile widths, and at 200% browser zoom.
+- Keyboard/accessibility smoke testing.
+- Chrome and Firefox smoke testing.
+- No filesystem path, `pdfPath`, stack trace, SQL text, employee-ownership information, or other
+  internal exception detail was observed in any UI-facing error at any point.
+
+Qualifications recorded accurately, per direct confirmation against the implementation rather
+than assumption:
+
+- `PROCESSING` was not manually observable, because payroll run creation and retry are
+  synchronous by design (the run reaches a terminal `CALCULATED`/`FAILED` state within the same
+  request/response cycle) -- this was confirmed from the implementation, not forced via a
+  database edit.
+- The concurrent two-row "Downloading..." state on the admin payslip table is recorded as
+  **AUTOMATED-COVERAGE-ONLY**: the user did not explicitly observe both download buttons pending
+  simultaneously in the browser, but this behavior is covered by the existing controlled-Promise
+  test for `PayrollRunDetailPage`'s per-row `Set<number>` download-state tracking (Phase 8D-2C).
+- Safari is unavailable on the Windows manual-test environment and is recorded as **not
+  applicable**, not failed.
+- The automated baseline (372 frontend tests, 0 failures, 0 skipped; `npm run build` succeeded)
+  was already verified before this manual-testing phase began and was not rerun as part of it.
+- **`updated_at` timestamp observation**: during manual verification, `payroll_runs.updated_at`
+  and `payslips.updated_at` were observed to remain equal to each row's `created_at` even after a
+  genuine state change (confirmed via the independent `version` column incrementing). Root-cause
+  investigation (migrations, entity mappings, JPA auditing configuration, the PDF-generation
+  service, and comparable entities across the whole schema) confirmed this is **expected,
+  insert-only behavior applied consistently project-wide**: every audited entity maps
+  `updated_at` as `insertable = false, updatable = false`, with no JPA auditing infrastructure
+  anywhere in the project: the `@Version` column is the intended state-change indicator instead.
+  This has no impact on payroll or PDF correctness. The admin "Updated" label on
+  `PayrollRunDetailPage` displaying this permanently creation-stable value is a low-priority
+  UI-labeling backlog note, not a Phase 8D-3 blocker.
+
+All temporary fixtures, their auto-generated payslips, and the dedicated external PDF-storage
+directory used for this phase have been fully removed; audit-log rows generated by this testing
+were preserved (append-only) per the same authorization that governed fixture creation.
+
+**Phase 8D-3: Complete.**
+
+**Phase 8: Complete.** All sub-phases (8A through 8D-3) are done: payroll schema and calculation
+(8A-2), transactional run creation/calculation (8B-1), HR Admin creation/read APIs (8B-2A),
+failed-run retry and employee self-service read APIs (8B-2B), payslip PDF rendering (8C-2A), PDF
+generation orchestration and secure download (8C-2B1/8C-2B2), the full HR Admin and Employee
+payroll frontend (8D-2A1 through 8D-2D2), and manual end-to-end browser verification (8D-3).
+
 ## Phases 9–13
 Status: Not started.
