@@ -153,6 +153,31 @@ describe('App', () => {
     expect(screen.queryByText(/placeholder screen/i)).not.toBeInTheDocument()
   })
 
+  it('redirects an unauthenticated visitor away from /employee/attendance to login', () => {
+    renderApp('/employee/attendance')
+
+    expect(screen.getByRole('heading', { name: 'Sign in' })).toBeInTheDocument()
+  })
+
+  it('blocks an authenticated HR_ADMIN from /employee/attendance', () => {
+    sessionStorage.setItem('hr_payroll_access_token', fakeToken('HR_ADMIN'))
+
+    renderApp('/employee/attendance')
+
+    expect(screen.getByRole('heading', { name: 'Not authorized' })).toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: 'My Attendance' })).not.toBeInTheDocument()
+  })
+
+  it('allows an authenticated EMPLOYEE into the real /employee/attendance page (not the old placeholder)', () => {
+    sessionStorage.setItem('hr_payroll_access_token', fakeToken('EMPLOYEE', 7))
+
+    renderApp('/employee/attendance')
+
+    expect(screen.getByRole('heading', { name: 'My Attendance' })).toBeInTheDocument()
+    expect(screen.queryByText('Clock in/out and view history.')).not.toBeInTheDocument()
+    expect(screen.queryByText(/placeholder screen/i)).not.toBeInTheDocument()
+  })
+
   it('redirects an unauthenticated visitor away from /employee/payslips/:id to login', () => {
     renderApp('/employee/payslips/1')
 

@@ -37,6 +37,7 @@ function renderLayout(initialEntry: string) {
             <Route path="/employee/salary" element={<h1>Salary History</h1>} />
             <Route path="/employee/leave" element={<h1>My Leave</h1>} />
             <Route path="/employee/payslips" element={<h1>My Payslips</h1>} />
+            <Route path="/employee/attendance" element={<h1>My Attendance</h1>} />
           </Route>
         </Routes>
       </MemoryRouter>
@@ -79,7 +80,7 @@ describe('AppLayout', () => {
       sessionStorage.setItem('hr_payroll_access_token', fakeToken('EMPLOYEE', 7))
     })
 
-    it('shows exactly the five employee sidebar items and no HR admin items', () => {
+    it('shows exactly the six employee sidebar items and no HR admin items', () => {
       renderLayout('/employee')
 
       const nav = screen.getByRole('navigation')
@@ -90,6 +91,7 @@ describe('AppLayout', () => {
         'Salary History',
         'My Leave',
         'My Payslips',
+        'My Attendance',
       ])
       expect(within(nav).queryByRole('link', { name: 'Manage Departments' })).not.toBeInTheDocument()
       expect(within(nav).queryByRole('link', { name: 'Manage Employees' })).not.toBeInTheDocument()
@@ -101,6 +103,21 @@ describe('AppLayout', () => {
       renderLayout('/employee')
 
       expect(screen.getByRole('link', { name: 'My Payslips' })).toHaveAttribute('href', '/employee/payslips')
+    })
+
+    it('links My Attendance to the exact approved href', () => {
+      renderLayout('/employee')
+
+      expect(screen.getByRole('link', { name: 'My Attendance' })).toHaveAttribute('href', '/employee/attendance')
+    })
+
+    it('navigates to /employee/attendance via the sidebar My Attendance link', async () => {
+      const user = userEvent.setup()
+      renderLayout('/employee')
+
+      await user.click(screen.getByRole('link', { name: 'My Attendance' }))
+
+      expect(await screen.findByRole('heading', { name: 'My Attendance' })).toBeInTheDocument()
     })
 
     it('shows Employee as a non-link role label and Logout in the header', () => {
@@ -159,6 +176,7 @@ describe('AppLayout', () => {
       expect(within(nav).queryByRole('link', { name: 'My Profile' })).not.toBeInTheDocument()
       expect(within(nav).queryByRole('link', { name: 'Salary History' })).not.toBeInTheDocument()
       expect(within(nav).queryByRole('link', { name: 'My Leave' })).not.toBeInTheDocument()
+      expect(within(nav).queryByRole('link', { name: 'My Attendance' })).not.toBeInTheDocument()
     })
 
     it('shows HR Admin as a non-link role label and Logout in the header', () => {

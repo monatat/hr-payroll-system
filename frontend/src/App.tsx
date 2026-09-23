@@ -12,6 +12,7 @@ import { LeaveRequestListPage } from './routes/admin/LeaveRequestListPage'
 import { PayrollRunDetailPage } from './routes/admin/PayrollRunDetailPage'
 import { PayrollRunListPage } from './routes/admin/PayrollRunListPage'
 import { SalaryHistoryPage as AdminSalaryHistoryPage } from './routes/admin/SalaryHistoryPage'
+import { AttendancePage } from './routes/employee/AttendancePage'
 import { EmployeeProfilePage } from './routes/employee/EmployeeProfilePage'
 import { LeaveDashboardPage } from './routes/employee/LeaveDashboardPage'
 import { PayslipDetailPage } from './routes/employee/PayslipDetailPage'
@@ -153,7 +154,7 @@ function App() {
           path="/employee/attendance"
           element={
             <ProtectedRoute allowedRoles={['EMPLOYEE']}>
-              <PlaceholderPage title="My Attendance" description="Clock in/out and view history." />
+              <AttendancePage />
             </ProtectedRoute>
           }
         />

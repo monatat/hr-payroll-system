@@ -2515,5 +2515,96 @@ no page, route, sidebar entry, component, hook, or state-management abstraction 
 Phase 9 remains **In progress** overall; the backend and the frontend data/formatting foundation
 are both complete, but no employee-facing attendance page exists yet.
 
+### Phase 9D — Employee attendance page, protected route, and sidebar entry
+Status: **Complete.** UI only, built entirely on the existing Phase 9C `attendance`/
+`attendanceDateTime` modules -- no new API function, type, or formatting behavior was added, and
+neither module was modified. HR Admin attendance, correction/backdating, and Phase 10 reports
+remain unimplemented.
+
+- **Route**: `/employee/attendance` now renders `AttendancePage` (heading `My Attendance`) inside
+  the existing `<ProtectedRoute allowedRoles={['EMPLOYEE']}>`, replacing the previous
+  `PlaceholderPage`. No new route, no HR Admin route, and no employee-id path/query parameter was
+  added.
+- **Sidebar**: exactly one new EMPLOYEE-only item, `{ label: 'My Attendance', to:
+  '/employee/attendance' }`, appended after the five existing employee items (order preserved).
+  The stale "unfinished placeholder" comment's attendance reference was removed (the comment now
+  only calls out `/admin/reports`, the one remaining unfinished placeholder). No HR Admin item was
+  added.
+- **Today status is always backend-authoritative** -- read only from `getTodayAttendance()`,
+  never derived from history (a stale prior-day open row would make that ambiguous). Three
+  explicit states, each communicated through visible text (never color alone): `NOT_CLOCKED_IN`
+  ("Not clocked in today", only a Clock In button), `CLOCKED_IN` ("Clocked in" plus formatted
+  date/clock-in time and the `—` placeholder for the still-open clock-out, only a Clock Out
+  button), `CLOCKED_OUT` ("Clocked out" plus both formatted times, no active mutation button).
+  Attendance id, employee id, user id, actor id, raw ISO timestamp strings, department, and
+  salary/payroll data are never rendered anywhere on this page.
+- **Clock-in/clock-out confirmation flow**, mirroring `PayrollRunDetailPage`'s established
+  `MutationMode` (`'idle' | 'clockin-confirm' | 'clockout-confirm'`) pattern exactly rather than
+  its multi-row `Set` pattern, since this page only ever has one current-day action in flight:
+  clicking Clock In/Clock Out opens an inline confirmation ("Clock in now?"/"Clock out now?")
+  with `Confirm clock in`/`Confirm clock out` and `Cancel` buttons; Cancel makes zero API calls;
+  each confirm button calls `clockIn()`/`clockOut()` with no argument and is guarded by an
+  early-return boolean check (`if (clockingIn) return`/`if (clockingOut) return`) that also
+  disables both buttons and shows `Clocking in...`/`Clocking out...` while pending -- verified
+  directly that two rapid confirm clicks while pending produce exactly one request. Only the
+  action valid for the current backend state is ever rendered.
+- **Authoritative refresh after mutation**: success shows fixed visible feedback ("Clocked in
+  successfully."/"Clocked out successfully."), closes the confirmation, and increments a
+  `refreshToken` that both the today-status and history effects depend on, so both sections
+  re-fetch from the backend rather than the page guessing the new state locally; the current
+  history page is preserved across this refresh when it remains valid, and clamps to the last
+  valid page (reusing `PayslipListPage`'s established out-of-range clamping logic exactly) if
+  refreshed metadata reports it is not. Failure restores the button/controls, keeps the page
+  retryable, and never clears already-loaded today/history data.
+- **Stable recognized-error mapping**, using `extractErrorCode` from the existing `api/errors.ts`
+  boundary: `ATTENDANCE_ALREADY_CLOCKED_IN` / `ATTENDANCE_NO_OPEN_RECORD` /
+  `ATTENDANCE_ALREADY_CLOCKED_OUT` each display the backend's own `detail` when present and
+  non-blank, otherwise the matching fixed fallback text. Any unrecognized code, missing code, or
+  malformed error renders exactly `"Could not update attendance. Please try again."` -- verified
+  directly with a planted unknown code carrying a raw internal-looking detail string, confirming
+  only the fixed message renders.
+- **Independent load sections**: today-status and history load via two separate effects/error
+  states, each with its own fixed fallback (`"Could not load today's attendance. Please try
+  again."` / `"Could not load attendance history. Please try again."`) -- verified directly that
+  a today-load failure does not prevent history from rendering, and vice versa.
+- **History table**: semantic `<table>` with an `sr-only` caption, Date/Clock In/Clock Out/Status
+  columns via `formatAttendanceDate`/`formatAttendanceTime`, `Status` as visible text (`Open` for
+  a null `clockOutAt`, `Completed` otherwise), rows rendered in exactly the backend-provided order
+  (verified directly with an out-of-order fixture), inside an `overflow-x-auto` container, with a
+  `"No attendance history yet."` empty state. No attendance id, employee id, department, or
+  salary/payroll data is ever rendered.
+- **Pagination**: fixed page size 20, `Previous`/`Page X of Y`/`Next`, Previous disabled on the
+  first page, Next disabled on the last page, both disabled while loading, duplicate in-flight
+  page requests blocked -- all mirroring `PayslipListPage`'s established pattern exactly. Only
+  `page`/`size` are ever sent; no `sort`, no employee id.
+- **Accessibility**: semantic `h1`("My Attendance")/`h2` section headings, `role="alert"` for
+  every load/action error, visible (never color-only) status and success text, ordinary button
+  semantics for every confirmation control (no custom widget), keyboard-operable throughout,
+  existing Tailwind conventions reused, no new icon/UI-component dependency.
+- **RED-first evidence, by group.** Page: `AttendancePage.test.tsx` (47 tests) was run first
+  against the not-yet-existing `AttendancePage` (Vite import-resolution failure), then the
+  component was implemented and all 47 passed on the first attempt. Routing: 3 new tests were
+  added to `App.test.tsx` and run against the still-placeholder-backed route first -- the
+  "real page, not the old placeholder" assertion genuinely failed (the placeholder's `Clock
+  in/out and view history.` text was still present), confirming real RED before `App.tsx` was
+  changed; the other two (unauthenticated-401/HR_ADMIN-403 style) redirect/block assertions don't
+  depend on which component renders, so they passed immediately, which is expected, not a
+  false-positive RED. Sidebar: 2 new tests plus one updated five-to-six-item enumeration
+  assertion were added to `AppLayout.test.tsx` and run against the unmodified `Sidebar.tsx` first
+  -- all 3 genuinely failed (no `My Attendance` link existed yet), confirming real RED before
+  `Sidebar.tsx` was changed.
+- Frontend: 52 new tests (458 total, up from 406) -- 47 in the new `AttendancePage.test.tsx`, 3
+  new routing tests in `App.test.tsx` (41 total, up from 38), 2 new sidebar tests in
+  `AppLayout.test.tsx` (24 total, up from 22; the existing five-item enumeration test was updated
+  to six items, not counted as a new test). All 458 pass across 25 test files; 0 failures; 0
+  skipped. `npm run build` (`tsc -b && vite build`) succeeds with no warnings. Backend was not
+  touched (`git status` shows zero `backend/` entries), no migration or dependency/lockfile
+  changed, and the Phase 9C `attendance.ts`/`attendanceDateTime.ts` modules were not modified.
+- **Explicitly unimplemented, deferred to Phase 9E:** focused manual cross-browser/cross-device
+  verification of the real attendance UI, now that it exists for the first time.
+
+Phase 9 remains **In progress** overall; the complete backend and frontend (entity through UI)
+now exist, but no manual browser testing has been performed yet.
+
 ## Phases 10–13
 Status: Not started.
