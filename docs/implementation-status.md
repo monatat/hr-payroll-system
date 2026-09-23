@@ -2450,5 +2450,70 @@ not exist, and no attendance correction/backdating endpoint was added.
 Phase 9 remains **In progress** overall; the full backend (entity through HTTP API) is complete,
 but no frontend surface exists yet and no manual browser testing has been performed.
 
+### Phase 9C — Frontend attendance API, types, and formatting foundation
+Status: **Complete.** Data/utility layer only, built on top of the Phase 9B-2 backend contract --
+no page, route, sidebar entry, component, hook, or state-management abstraction exists yet.
+`App.tsx`, `App.test.tsx`, `Sidebar.tsx`, and every `AppLayout` test are untouched.
+
+- **`frontend/src/api/attendance.ts`** -- typed client for all four Phase 9B-2 endpoints:
+  - `clockIn()` -> `POST /api/employees/me/attendance/clock-in`, no request body, returns
+    `AttendanceRecord`.
+  - `clockOut()` -> `POST /api/employees/me/attendance/clock-out`, no request body, returns
+    `AttendanceRecord`.
+  - `getTodayAttendance()` -> `GET /api/employees/me/attendance/today`, returns
+    `AttendanceTodayResponse`, preserving `attendance: null` for `NOT_CLOCKED_IN` exactly (verified
+    directly, not just typed).
+  - `listOwnAttendance(page = 0, size = 20)` -> `GET /api/employees/me/attendance` with `{ page,
+    size }` as the only query parameters -- no `sort`, no `employeeId`. The backend's fixed
+    `workDate DESC, id DESC` ordering is trusted as-is; this module never reorders, filters, or
+    mutates the returned page.
+  - Every function uses only the existing shared `apiClient` (Bearer token attached by its
+    existing request interceptor) -- no direct `axios` call, no manual JWT decoding, and no
+    employee or actor id appears in any request path/query/body anywhere in this module.
+  - Errors are never caught or rewritten here -- a rejected request propagates through the
+    existing `apiClient` boundary unchanged, matching every other API module's convention.
+- **Types**: `AttendanceTodayStatus` as the exact union `'NOT_CLOCKED_IN' | 'CLOCKED_IN' |
+  'CLOCKED_OUT'` (not a broad `string`); `AttendanceRecord` (`id`, `workDate`, `clockInAt`,
+  `clockOutAt` only -- named "Record" rather than "Response" to match this project's established
+  convention of dropping the backend DTO's "Response" suffix on the frontend, e.g. `PayslipResponse`
+  -> `Payslip`); `AttendanceTodayResponse` (`state`, `attendance`); a `PagedResponse<T>` matching
+  the exact shape already used in `payroll.ts`/`leave.ts`, duplicated locally per this codebase's
+  existing established per-module pagination-type convention rather than imported cross-module.
+  None of `employeeId`, `userId`, `employee`, `department`, `salary`, `payroll`, or any editable
+  field was added to any type.
+- **`frontend/src/utils/attendanceDateTime.ts`** -- `formatAttendanceDate`/`formatAttendanceTime`,
+  following `formatPayrollPeriod`'s existing "never construct a `Date`" convention exactly (a
+  regex-based string parse instead), since `Date`-based parsing of a bare `LocalDate`/`LocalDateTime`
+  string is timezone-sensitive and could silently corrupt the backend's Asia/Kuala_Lumpur business
+  date/time. Chosen display format, recorded exactly: dates render as `"10 March 2026"` (day,
+  full month name, year); times render 12-hour with an AM/PM suffix and always drop
+  seconds/fractional seconds (e.g. `"9:00 AM"`, `"2:30 PM"`, `"12:00 AM"` for midnight) -- shown to
+  minute precision only. A `null` `clockOutAt` and any malformed/invalid/out-of-range input (bad
+  month, bad hour, missing time portion, empty string) all render the same safe placeholder,
+  `"—"` (an em dash), matching the placeholder already used elsewhere in this project (e.g.
+  `EmployeeDetailPage`'s `phoneNumber ?? '—'`) -- never `Invalid Date`, `NaN`, or a thrown
+  exception. Verified directly that changing the test process's `TZ` (via `vi.stubEnv`) between
+  two timezones on opposite sides of the globe never changes either formatter's output, proving
+  the host/browser timezone cannot influence the result.
+- **RED-first evidence.** `attendance.test.ts`/`attendanceDateTime.test.ts` were run first against
+  the not-yet-existing `attendance.ts`/`attendanceDateTime.ts` modules (Vite import-resolution
+  failure); the implementation then passed all 34 tests on the first attempt. One genuine
+  root-cause diagnosis along the way: `npm run build` initially failed `tsc -b` with "Cannot find
+  name 'process'" in the new timezone test, because this frontend's `tsconfig` deliberately has no
+  Node type definitions (a pure browser app) -- fixed by using Vitest's own typed `vi.stubEnv`/
+  `vi.unstubAllEnvs()` instead of touching `process.env` directly, in the test file only; no
+  dependency was added and no tsconfig was changed.
+- Frontend: 34 new tests (406 total, up from 372) -- 15 in `attendance.test.ts`, 19 in
+  `attendanceDateTime.test.ts`. All 406 pass across 24 test files; 0 failures; 0 skipped. `npm run
+  build` (`tsc -b && vite build`) succeeds with no warnings. Backend was not touched (`git status`
+  shows zero `backend/` entries), no migration or dependency/lockfile changed, and no route, page,
+  component, or sidebar entry was added.
+- **Explicitly unimplemented, deferred to Phase 9D and later:** the `AttendancePage` component,
+  its route in `App.tsx`, the `Sidebar.tsx` EMPLOYEE entry, and any other UI. Focused manual
+  browser verification remains deferred until that UI exists.
+
+Phase 9 remains **In progress** overall; the backend and the frontend data/formatting foundation
+are both complete, but no employee-facing attendance page exists yet.
+
 ## Phases 10–13
 Status: Not started.
