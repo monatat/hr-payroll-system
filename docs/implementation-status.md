@@ -2603,8 +2603,69 @@ remain unimplemented.
 - **Explicitly unimplemented, deferred to Phase 9E:** focused manual cross-browser/cross-device
   verification of the real attendance UI, now that it exists for the first time.
 
-Phase 9 remains **In progress** overall; the complete backend and frontend (entity through UI)
-now exist, but no manual browser testing has been performed yet.
+### Phase 9E — Employee attendance manual browser verification
+Status: **Complete.** Full manual browser verification of the Phase 9A through 9D employee
+attendance feature, performed against a live backend/frontend/PostgreSQL stack with temporary
+fixtures (`MANUAL_9E_20260923`-prefixed users, employees, and attendance rows), tracked in an
+external cleanup ledger outside the repository, and fully removed after verification.
+
+- **Authorization**: logged-out route protection passed; HR_ADMIN had no `My Attendance` sidebar
+  item and direct navigation to `/employee/attendance` was blocked; no employee attendance data
+  was exposed to HR_ADMIN.
+- **Employee attendance**: sidebar/route access passed; the initial `NOT_CLOCKED_IN` state passed;
+  history formatting, newest-first ordering, pagination (across two pages), and the stale
+  prior-day open-row behavior (2026-09-01 remaining open without affecting today's state) all
+  passed; confirmation/cancel/pending/success flows all passed; Employee A's clock-in and
+  clock-out persisted correctly through refresh and logout/login, reaching a final `COMPLETED`
+  state with no duplicate current-day row.
+- **Ownership isolation**: Employee B saw only their own records and never Employee A's
+  identity/history. Employee B also performed one valid clock-in during testing (producing a
+  temporary attendance row deliberately left open) -- confirmed as an additional valid test
+  action, not an application defect.
+- **Responsive/accessibility/browser verification**: desktop (1440x900), tablet (768x1024),
+  mobile (390x844), and 200% zoom all passed; the history table scrolled within its own
+  container with no whole-page horizontal overflow; keyboard/focus/confirmation accessibility,
+  semantic headings/table structure, and text-based (never color-only) status/error presentation
+  all passed; Chrome and Firefox both passed.
+- **Network/security checks**: NETWORK-01 through NETWORK-04 are recorded as
+  **SOURCE-AND-AUTOMATED-COVERAGE** (resolved by direct inspection of the committed
+  `attendance.ts` source, its existing Phase 9C test assertions, and the backend controller's
+  identity derivation), not manual browser observation -- confirming the today/history/clock-in/
+  clock-out requests carry no client-supplied employee/actor/user identity, history sends only
+  `page`/`size`, both mutation POSTs carry no request body, and the backend derives identity
+  solely from the authenticated principal.
+- **Qualifications**: duplicate-click concurrency protection remains
+  **AUTOMATED-COVERAGE-ONLY**; Asia/Kuala_Lumpur midnight rollover remains
+  **AUTOMATED-COVERAGE-ONLY**; unknown/malformed-error redaction remains
+  **AUTOMATED-COVERAGE-ONLY**; Safari is unavailable on this Windows environment and is recorded
+  as **not applicable**, not failed.
+- **Verification evidence**: direct read-only database/audit reconciliation (not just browser
+  observation) confirmed attendance ownership and the absence of any duplicate current-day row;
+  every relevant audit row was exactly one-to-one with a successful action (one
+  `ATTENDANCE_CLOCKED_IN`/`ATTENDANCE_CLOCKED_OUT` pair for Employee A's row, one
+  `ATTENDANCE_CLOCKED_IN` for Employee B's still-open row) with safe, redacted detail fields only;
+  at this point (before the cleanup below removed the temporary fixtures), audit logs remained
+  append-only, with no row deleted or edited.
+- **Cleanup**: all 26 temporary attendance rows, 3 temporary users, and 2 temporary employees
+  were deleted by exact recorded id in a single transaction, verified by exact `RETURNING` sets;
+  the shared department (id 332, "IT") was reused read-only and remains unchanged. Every relevant
+  audit record (ids 5650, 5651, 5653) was retained: deleting the temporary users caused
+  PostgreSQL to set those audit rows' `actor_id` values to NULL through the schema's existing
+  `ON DELETE SET NULL` foreign key. No audit row was deleted or manually edited, and `action`,
+  `entity_name`, `entity_id`, `details`, and `created_at` remained unchanged. Core table counts
+  returned exactly to the original baseline (users 3, employees 2, departments 1, attendance 0).
+- **Automated baselines were not rerun during Phase 9E**: backend remains the previously
+  documented 505 tests, 0 failures, 0 errors, 3 pre-existing skips; frontend remains the
+  previously documented 458 tests across 25 files, 0 failures, 0 skipped, with the previously
+  documented successful build. No production source, test, migration, dependency, or
+  configuration file changed during Phase 9E.
+
+**Phase 9E: Complete.**
+
+**Phase 9: Complete.** All Phase 9 sub-phases (9A, 9B-1, 9B-2, 9C, 9D, and 9E) are complete:
+attendance persistence/time foundation, concurrency-safe backend service, secured employee
+self-service API, frontend API/formatting foundation, employee attendance UI, and focused manual
+browser verification.
 
 ## Phases 10–13
 Status: Not started.
