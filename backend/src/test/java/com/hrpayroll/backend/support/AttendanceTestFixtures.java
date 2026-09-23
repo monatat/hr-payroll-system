@@ -1,5 +1,7 @@
 package com.hrpayroll.backend.support;
 
+import java.time.LocalDate;
+import java.time.LocalDateTime;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.crypto.password.PasswordEncoder;
 
@@ -44,6 +46,18 @@ public final class AttendanceTestFixtures {
                 EMPLOYEE_CODE_PREFIX + codeSuffix,
                 icNumber,
                 departmentId);
+    }
+
+    /** Raw-SQL insert bypassing AttendanceService entirely -- used to plant a stale prior-day row. */
+    public static long insertAttendance(
+            JdbcTemplate jdbc, long employeeId, LocalDate workDate, LocalDateTime clockInAt, LocalDateTime clockOutAt) {
+        return jdbc.queryForObject(
+                "INSERT INTO attendance (employee_id, work_date, clock_in_at, clock_out_at) VALUES (?, ?, ?, ?) RETURNING id",
+                Long.class,
+                employeeId,
+                workDate,
+                clockInAt,
+                clockOutAt);
     }
 
     /** Safe to call even if nothing exists. Never touches audit_logs (append-only, retained). */

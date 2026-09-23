@@ -22,12 +22,14 @@ public class ApiExceptionHandler {
     private static final Map<String, String> CONSTRAINT_CODES = Map.of(
             "uq_departments_name", "DUPLICATE_DEPARTMENT_NAME",
             "uq_employees_employee_code", "DUPLICATE_EMPLOYEE_CODE",
-            "uq_employees_ic_number", "DUPLICATE_IC_NUMBER");
+            "uq_employees_ic_number", "DUPLICATE_IC_NUMBER",
+            "uq_attendance_employee_work_date", "ATTENDANCE_ALREADY_CLOCKED_IN");
 
     private static final Map<String, String> CONSTRAINT_DETAILS = Map.of(
             "uq_departments_name", "A department with this name already exists.",
             "uq_employees_employee_code", "An employee with this employee code already exists.",
-            "uq_employees_ic_number", "An employee with this IC number already exists.");
+            "uq_employees_ic_number", "An employee with this IC number already exists.",
+            "uq_attendance_employee_work_date", "You have already clocked in today.");
 
     @ExceptionHandler(DataIntegrityViolationException.class)
     public ResponseEntity<ProblemDetail> handleDataIntegrityViolation(DataIntegrityViolationException ex) {

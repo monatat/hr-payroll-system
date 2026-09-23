@@ -2386,5 +2386,69 @@ Status: **Complete.** Service/domain layer only -- no controller, `@PreAuthorize
 Phase 9 remains **In progress** overall; the service/domain layer is complete but nothing is
 reachable over HTTP yet.
 
+### Phase 9B-2 — Attendance HTTP API, security, and stable error handling
+Status: **Complete.** HTTP layer only, over the existing Phase 9B-1 service/DTOs -- no new service
+abstraction, request DTO, migration, dependency, or frontend code. HR Admin attendance still does
+not exist, and no attendance correction/backdating endpoint was added.
+
+- **`AttendanceSelfServiceController`** at `/api/employees/me/attendance`,
+  `@PreAuthorize("hasRole('EMPLOYEE')")` at the class level, mirroring
+  `PayslipSelfServiceController`/`LeaveRequestSelfServiceController`'s exact pattern:
+  - `POST /clock-in` -- no request body, 201 with `AttendanceResponse`.
+  - `POST /clock-out` -- no request body, 200 with `AttendanceResponse`.
+  - `GET /today` -- 200 with `AttendanceTodayResponse` for all three states; "no record yet" is
+    `NOT_CLOCKED_IN` with a null `attendance`, never an HTTP error.
+  - `GET /` (history) -- `PagedModel<AttendanceResponse>`, defaults to page 0 / size 20.
+  - Every endpoint derives `employeeId`/`actorUserId` only from `@AuthenticationPrincipal
+    AuthenticatedUser` via the same `requireEmployeeId(principal)` helper duplicated verbatim
+    across every self-service controller in this project (no generic ownership helper introduced,
+    matching that established convention exactly) -- no `{employeeId}` path/query/body field
+    exists anywhere, the JWT is never decoded manually, and an unlinked-employee principal gets
+    the identical safe `Employee profile not found` 404 as every other self-service endpoint.
+- **Fixed history ordering, not client-overridable.** `history` accepts `@PageableDefault(size =
+  20) Pageable pageable` (for its established page/size defaulting and negative-input safety
+  behavior, matching every other paginated endpoint) but immediately discards its `Sort` --
+  rebuilding a plain `PageRequest.of(pageNumber, pageSize)` before calling the service -- so a
+  client-supplied `sort` query parameter has no code path to reach the query at all. The Phase 9A
+  repository's baked-in `workDate DESC, id DESC` ordering remains the sole, non-overridable order;
+  proven directly by a test that supplies `sort=workDate,asc` and asserts the response is still
+  newest-first.
+- **Duplicate clock-in**: `ApiExceptionHandler`'s existing constraint-name map (already used for
+  `uq_departments_name`/`uq_employees_employee_code`/`uq_employees_ic_number`) gained one entry --
+  `uq_attendance_employee_work_date` -> `ATTENDANCE_ALREADY_CLOCKED_IN` (409, "You have already
+  clocked in today.") -- reusing the exact existing detection mechanism, never
+  `ex.getMessage()`, never a second error-response shape.
+- **New `AttendanceExceptionHandler`**, mirroring `LeaveExceptionHandler`/`SalaryExceptionHandler`'s
+  flat `ProblemDetail`-building style exactly: `AttendanceNoOpenRecordException` -> 404
+  `ATTENDANCE_NO_OPEN_RECORD` ("You have not clocked in today."), `AttendanceAlreadyClockedOutException`
+  -> 409 `ATTENDANCE_ALREADY_CLOCKED_OUT` ("You have already clocked out today.") -- both using the
+  exception's own already-safe, non-interpolated message.
+- **Ownership isolation and redaction**, verified directly: employee A's clock-in/history/today
+  are invisible to employee B's token (a `POST /clock-out` from B against A's open row correctly
+  fails with `ATTENDANCE_NO_OPEN_RECORD`, never touching A's row); every response (`clock-in`,
+  `today`, `history`) was checked via `jsonPath` to contain none of `employeeId`, `userId`,
+  `employee`, `department`, `salary`, or `payroll`; conflict/error responses were checked to
+  contain no SQL/constraint-name text.
+- **RED-first evidence.** Because the new tests only hit HTTP paths (no test references a
+  not-yet-existing controller class by name), RED was confirmed by running the new
+  `AttendanceSelfServiceControllerTest` suite against the unmodified Phase 9B-1 code: 24 of 29
+  tests failed with `404`/routing errors (the 5 that already passed -- four unauthenticated-401
+  checks plus the id-in-path routing check -- are pre-existing Spring Security perimeter behavior
+  that does not depend on the controller's existence, not false-positive RED). The controller,
+  exception handler, and constraint-map entry were then implemented together and all 29 tests
+  passed on the first run.
+- Backend: 29 new tests (505 total, up from 476), all in `AttendanceSelfServiceControllerTest`.
+  `./mvnw.cmd clean verify` passes (505 run, 0 failures, 0 errors, 3 skipped -- the same 3
+  pre-existing symlink-unsupported-OS skips as the Phase 8/9A/9B-1 baseline, none added or
+  removed). No migration added (Flyway remains at schema version 13); no dependency changed;
+  frontend untouched; the local development database has zero leftover Phase 9 fixture rows after
+  the test run's own cleanup.
+- **Explicitly unimplemented, deferred to later:** the frontend API/page/route/sidebar (Phase
+  9C/9D), focused manual browser verification (Phase 9E, after the frontend exists), HR Admin
+  attendance, manual correction/backdating, and Phase 10 reports.
+
+Phase 9 remains **In progress** overall; the full backend (entity through HTTP API) is complete,
+but no frontend surface exists yet and no manual browser testing has been performed.
+
 ## Phases 10–13
 Status: Not started.
