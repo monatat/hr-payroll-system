@@ -2303,5 +2303,88 @@ Phase 9A/9B requirement is satisfiable against it as-is, so no new migration was
 Phase 9 remains **In progress** overall; only the non-HTTP entity/repository/time foundation
 exists so far.
 
+### Phase 9B-1 — Attendance service, concurrency, DTO, domain exception, and audit foundation
+Status: **Complete.** Service/domain layer only -- no controller, `@PreAuthorize`, HTTP mapping,
+`AttendanceExceptionHandler`, or frontend code exists yet. Built entirely on the unchanged Phase
+9A foundation (V7, `Attendance`, `AttendanceRepository`, the Asia/Kuala_Lumpur `Clock` bean).
+
+- **`AttendanceService`** (`clockIn`, `clockOut`, `getTodayStatus`, `listHistory`) takes
+  `employeeId`/`actorUserId` as trusted internal parameters -- Phase 9B-2's controller will derive
+  both from `AuthenticatedUser`, never from a request body/path/query field. Every business date
+  (`LocalDate.now(clock)`) and event timestamp (`LocalDateTime.now(clock)`) comes from the
+  injected `Clock`; no method anywhere in the service calls the no-arg `LocalDate.now()`/
+  `LocalDateTime.now()`, and no other module's timezone behavior was touched.
+- **Clock-in**: inserts one row and calls `saveAndFlush` inside the transaction so
+  `uq_attendance_employee_work_date` is evaluated before the method returns -- the database
+  constraint remains the sole correctness mechanism against a duplicate or concurrent clock-in
+  (no pessimistic lock, no `@Version`, no check-then-insert). The resulting
+  `DataIntegrityViolationException` deliberately propagates uncaught in this sub-phase; Phase
+  9B-2 will extend `ApiExceptionHandler`'s existing constraint-name maps (the same mechanism
+  already used for `uq_departments_name`/`uq_employees_employee_code`) to translate it into a
+  stable `ATTENDANCE_ALREADY_CLOCKED_IN` 409. The audit event is recorded only after the insert
+  has survived the flush, so a losing duplicate/concurrent attempt never gets a success audit.
+- **Clock-out**: looks up only today's business-date row (never an arbitrary older open record,
+  so a stale prior-day row is never touched and never blocks today's clock-in), then performs a
+  new conditional `AttendanceRepository.updateClockOutIfOpen` (`@Modifying`, JPQL
+  `UPDATE ... WHERE id = :id AND clockOutAt IS NULL`, `clearAutomatically`/`flushAutomatically`
+  so a subsequent read is never served from a stale first-level-cache entry). PostgreSQL's own
+  re-evaluation of that `WHERE` clause against the current committed row at write time is the
+  sole correctness mechanism against a concurrent double clock-out: of two concurrent calls for
+  the same row, exactly one affects a row and the other affects none -- proven directly (see
+  concurrency evidence below), not assumed. `AttendanceNoOpenRecordException`/
+  `AttendanceAlreadyClockedOutException` (both new, no HTTP handler yet) cover "no row for today"
+  and "already closed" (including the losing side of the race), with exact safe messages "You
+  have not clocked in today."/"You have already clocked out today."
+- **Today-status**: always one explicit `AttendanceTodayStatus` (`NOT_CLOCKED_IN`/`CLOCKED_IN`/
+  `CLOCKED_OUT`) plus a nullable `AttendanceResponse`, from a dedicated `getTodayStatus` query --
+  never derived from page 1 of history, which would be ambiguous the moment a stale prior-day
+  open row exists.
+- **History**: `listHistory` returns `PagedModel<AttendanceResponse>` (matching
+  `PayrollQueryService.listOwnPayslips`'s existing service-layer convention) via the Phase 9A
+  `findByEmployeeIdOrderByWorkDateDescIdDesc` query -- verified to return only the requested
+  employee's own rows, in newest-work-date-first / id-DESC-tiebreaker order, with correct
+  pagination metadata.
+- **DTOs**: `AttendanceResponse` (`id`, `workDate`, `clockInAt`, `clockOutAt` only -- no
+  `employeeId`, no `Employee`, no user id, no department/salary/payroll data; verified directly by
+  reflecting over the record's components) and `AttendanceTodayResponse` (`state`, nullable
+  `attendance`).
+- **Audit**: reuses the existing `AuditService` unchanged. `ATTENDANCE_CLOCKED_IN`/
+  `ATTENDANCE_CLOCKED_OUT` actions, entity name `ATTENDANCE`, with only `workDate`/`clockInAt` (or
+  `clockOutAt`) as safe string-valued details -- no salary/payroll data, JWT/token, password,
+  IP/device data, employee name, or raw exception/SQL/constraint text ever recorded.
+- **Genuine concurrency evidence**, mirroring `PayrollRunConcurrencyTest`/
+  `SalaryStructureConcurrencyTest`'s established real-thread/real-PostgreSQL style exactly (no
+  mocks, no H2, no synchronized blocks, no sleeps): two real concurrent clock-ins for the same
+  employee/business-date resolve to exactly one success and one `DataIntegrityViolationException`,
+  exactly one attendance row, and exactly one clock-in audit row; two real concurrent clock-outs
+  for the same open row resolve to exactly one success and one `AttendanceAlreadyClockedOutException`,
+  exactly one closed row, and exactly one clock-out audit row.
+- **Boundary/host-independence evidence**: a fixed test `Clock` proves the business date rolls at
+  Asia/Kuala_Lumpur midnight (23:59:59 vs. 00:00:01), and a dedicated test temporarily sets the
+  JVM default timezone to Asia/Tokyo while the injected Clock stays fixed in Kuala Lumpur time,
+  confirming the computed business date still matches Kuala Lumpur, not the host default.
+- **RED-first evidence.** `AttendanceServiceTest`/`AttendanceConcurrencyTest` were run first
+  against the not-yet-existing `AttendanceService`/DTOs/exceptions (compile failure), then
+  implemented to green. One genuine root-cause diagnosis along the way: the first concurrency-test
+  run failed application-context startup with `BeanDefinitionOverrideException` because the test's
+  `@Primary` `Clock` override reused the same bean method name as `TimeConfig`'s real bean;
+  renaming the test bean method (mirroring `PayrollPdfServiceTest`'s `testPayslipPdfRenderer()`
+  convention exactly) fixed it without touching production code. A second, unrelated issue was a
+  test-isolation bug (an audit-count assertion read the whole `audit_logs` table instead of a
+  before/after delta, so an earlier test's real audit rows inflated it) -- fixed in the test only.
+- Backend: 27 new tests (476 total, up from 449) -- 25 in `AttendanceServiceTest`, 2 in
+  `AttendanceConcurrencyTest`. `./mvnw.cmd clean verify` passes (476 run, 0 failures, 0 errors, 3
+  skipped -- the same 3 pre-existing symlink-unsupported-OS skips as the Phase 8/9A baseline, none
+  added or removed). No migration added (Flyway remains at schema version 13); no dependency
+  changed; frontend untouched; the local development database has zero leftover Phase 9 fixture
+  rows after the test run's own cleanup.
+- **Explicitly unimplemented, deferred to Phase 9B-2 and later:** controller, HTTP endpoints,
+  `@PreAuthorize`, `AttendanceExceptionHandler`, the `ApiExceptionHandler` constraint-map
+  extension for `ATTENDANCE_ALREADY_CLOCKED_IN`, the frontend API/page/route/sidebar, HR Admin
+  attendance, manual correction/backdating, and Phase 10 reports.
+
+Phase 9 remains **In progress** overall; the service/domain layer is complete but nothing is
+reachable over HTTP yet.
+
 ## Phases 10–13
 Status: Not started.

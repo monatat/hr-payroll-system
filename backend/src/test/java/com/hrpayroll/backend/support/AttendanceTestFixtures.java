@@ -1,6 +1,7 @@
 package com.hrpayroll.backend.support;
 
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.security.crypto.password.PasswordEncoder;
 
 /**
  * Raw-SQL fixtures for Phase 9 attendance tests, kept in a separate
@@ -13,11 +14,23 @@ public final class AttendanceTestFixtures {
 
     public static final String EMPLOYEE_CODE_PREFIX = "EMP-PHASE9-";
 
+    public static final String ADMIN_EMAIL = "phase9.admin@test.local";
+
     private AttendanceTestFixtures() {
     }
 
     public static long installDepartment(JdbcTemplate jdbc) {
         return jdbc.queryForObject("INSERT INTO departments (name) VALUES (?) RETURNING id", Long.class, DEPARTMENT_NAME);
+    }
+
+    /** Real users row so audit_logs.actor_id's FK is satisfiable in tests that verify audit content. */
+    public static long installAdminUser(JdbcTemplate jdbc, PasswordEncoder passwordEncoder) {
+        return jdbc.queryForObject(
+                "INSERT INTO users (email, password_hash, role, account_status, employee_id) "
+                        + "VALUES (?, ?, 'HR_ADMIN', 'ACTIVE', NULL) RETURNING id",
+                Long.class,
+                ADMIN_EMAIL,
+                passwordEncoder.encode("Phase9AdminPass123!"));
     }
 
     public static long insertEmployee(JdbcTemplate jdbc, long departmentId, String codeSuffix, String icNumber) {
@@ -33,8 +46,9 @@ public final class AttendanceTestFixtures {
                 departmentId);
     }
 
-    /** Safe to call even if nothing exists. */
+    /** Safe to call even if nothing exists. Never touches audit_logs (append-only, retained). */
     public static void cleanup(JdbcTemplate jdbc) {
+        jdbc.update("DELETE FROM users WHERE email = ?", ADMIN_EMAIL);
         jdbc.update(
                 "DELETE FROM attendance WHERE employee_id IN "
                         + "(SELECT id FROM employees WHERE employee_code LIKE ?)",
