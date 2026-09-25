@@ -2667,5 +2667,94 @@ attendance persistence/time foundation, concurrency-safe backend service, secure
 self-service API, frontend API/formatting foundation, employee attendance UI, and focused manual
 browser verification.
 
-## Phases 10–13
+## Phase 10 — HR Admin reports
+
+**Approved scope** (product decisions resolved prior to implementation):
+- **Payroll cost**: defined as `SUM(Payslip.grossPay)`, BigDecimal precision preserved, reported
+  for a selected year as an authoritative annual total and authoritative monthly totals. Only
+  payslips belonging to payroll runs with status **CALCULATED** or **COMPLETED** contribute;
+  **PROCESSING** and **FAILED** runs do not. No department-level payroll-cost breakdown (employees'
+  department is mutable; payslips carry no historical department snapshot suitable for this). No
+  base-pay or net-pay interpretation. No frontend calculation of totals.
+- **Headcount**: current employees whose `employmentStatus` is **ACTIVE**, reported as an
+  authoritative total active count and a current ACTIVE breakdown by department. Department
+  breakdown represents current state only; **INACTIVE** employees do not contribute; no
+  historical/as-of-date headcount; no status filter at the API layer (ACTIVE is fixed into the
+  query, not parameterized); no employee-level rows.
+- **Explicit exclusions for all of Phase 10**: no historical headcount, no department payroll-cost
+  breakdown, no attendance/leave reporting, no employee-facing reports, no charts, no
+  export/download, no forecasting, no scheduled/email reports, no dashboard changes.
+
+### Phase 10A — Backend report-query foundation
+
+**Status: Complete.**
+
+- **Scope**: persistence/query-layer foundation only. No service, controller, endpoint,
+  `@PreAuthorize`/security annotation, exception handler, frontend code, route, sidebar item,
+  chart, export, migration, or dependency was added.
+- **New package** `com.hrpayroll.backend.reports` with two immutable projection records:
+  - `MonthlyPayrollCostSummary(int periodMonth, BigDecimal totalGrossPay)`.
+  - `DepartmentHeadcountSummary(Long departmentId, String departmentName, long activeEmployeeCount)`.
+- **`PayslipRepository`** gained two aggregate query methods:
+  - `findMonthlyGrossPayTotals(int year)` — JPQL `SELECT NEW` constructor expression against
+    `MonthlyPayrollCostSummary`, `SUM(p.grossPay)` grouped by `pr.periodMonth`, filtered to
+    `pr.periodYear = :year` and `pr.status IN (CALCULATED, COMPLETED)` (fully-qualified enum
+    literals), ordered by `periodMonth` ascending. Only months with at least one qualifying
+    payslip are returned.
+  - `findAnnualGrossPayTotal(int year)` — same status/year filter, `COALESCE(SUM(p.grossPay), 0)`
+    so an empty year returns a real `BigDecimal` zero rather than SQL `NULL`.
+- **`EmployeeRepository`** gained two methods:
+  - `countByEmploymentStatus(EmploymentStatus employmentStatus)` — plain Spring Data derived count
+    (kept generically parameterized as a reusable primitive; not itself an API contract).
+  - `findActiveHeadcountByDepartment()` — JPQL `SELECT NEW` constructor expression against
+    `DepartmentHeadcountSummary`, `COUNT(e)` grouped by `d.id, d.name`, with
+    `e.employmentStatus = EmploymentStatus.ACTIVE` fixed directly into the query (not a parameter),
+    ordered by `d.name ASC, d.id ASC`. Departments with zero current ACTIVE employees are never
+    returned.
+- **Payroll-status invariant**: `PayrollRunTransactionService.calculate()` is the only code path
+  that ever inserts a `Payslip` row, and it is exactly what transitions a run
+  `PROCESSING → CALCULATED`, so `FAILED`/stuck-`PROCESSING` runs have zero payslip rows by
+  construction. The explicit `IN (CALCULATED, COMPLETED)` filter is a defensive, testable statement
+  of that invariant rather than the sole mechanism — proven with deliberately-anomalous fixtures
+  that insert a payslip under a `PROCESSING`/`FAILED` run directly via SQL, bypassing the service.
+- **Tests**: new real-PostgreSQL repository test class
+  `backend/src/test/java/com/hrpayroll/backend/reports/ReportQueryRepositoryTest.java` (22 tests)
+  and a new raw-SQL fixtures class `backend/src/test/java/com/hrpayroll/backend/support/ReportTestFixtures.java`,
+  following this project's established real-database-only testing convention (never H2, never
+  mocked repositories). Covers: multi-payslip/multi-month summation, chronological ordering,
+  annual-total exactness, CALCULATED/COMPLETED inclusion, PROCESSING/FAILED exclusion (with
+  anomalous payslip rows), cross-year exclusion, empty-year zero/non-null behavior, exact
+  BigDecimal cent precision, basePay/netPay never substituted for grossPay, no double-counting
+  across employees in one run, ACTIVE/INACTIVE headcount inclusion/exclusion, per-department
+  aggregation and ordering, multi-department separation, departments with only INACTIVE employees
+  never appearing, a cross-check of the department-summed count against a raw SQL count, and a
+  reflection-based assertion that confirms the projection records expose no employee identity or
+  employee-level compensation fields. `MonthlyPayrollCostSummary` exposes only the approved
+  aggregate `totalGrossPay`, while `DepartmentHeadcountSummary` exposes only department identity
+  and the aggregate ACTIVE headcount.
+- **RED confirmation**: genuine compile-time "cannot find symbol" failures for the not-yet-existing
+  projection records and repository methods, confirmed before any production code was written.
+- **GREEN verification**: all 22 focused tests pass
+  (`./mvnw.cmd test -Dtest=ReportQueryRepositoryTest`). One test-fixture defect was found and fixed
+  during GREEN (not a production-code issue): the test class's `tearDown()` originally attempted to
+  delete `payroll_runs` rows before deleting the `payslips` referencing them; PostgreSQL correctly
+  rejected the parent-row deletion via the `fk_payslips_payroll_run` foreign key, which left stale
+  Phase 10 test-fixture rows behind from that failed run. `tearDown()` was corrected to delete
+  dependent rows (payslips and other fixture rows) before payroll runs, and only those stale Phase
+  10 test-fixture rows were then manually removed. No production or non-test row was touched. The
+  focused test and full suite passed cleanly afterward.
+- **Full backend verification**: `./mvnw.cmd clean verify` — **527 tests, 0 failures, 0 errors, 3
+  skipped** (previous baseline 505 tests, 0 failures, 0 errors, 3 pre-existing skips; the increase
+  is exactly the 22 new tests, and the same 3 pre-existing skips remain). Flyway validated the same
+  13 migrations with no new migration added. `backend/pom.xml` and the entire `frontend/` tree are
+  unchanged — no frontend test or build was run, since no frontend code changed.
+- **Design choices empirically confirmed** under this project's exact Hibernate 6.6.53/PostgreSQL
+  16 configuration: fully-qualified enum literals inside JPQL `IN (...)` and `=` comparisons; JPQL
+  `SELECT NEW` constructor expressions against Java `record` types; `COALESCE(SUM(...), 0)`
+  resolving to a proper `BigDecimal`.
+
+**Phase 10A: Complete.** Phase 10 remains In progress overall; only the backend aggregate-query
+foundation exists.
+
+## Phases 11–13
 Status: Not started.

@@ -1,5 +1,7 @@
 package com.hrpayroll.backend.payroll;
 
+import com.hrpayroll.backend.reports.MonthlyPayrollCostSummary;
+import java.math.BigDecimal;
 import java.util.List;
 import java.util.Optional;
 import org.springframework.data.domain.Page;
@@ -38,4 +40,37 @@ public interface PayslipRepository extends JpaRepository<Payslip, Long> {
      * lazy association to trigger an N+1 query for in the first place.
      */
     List<Payslip> findByPayrollRunIdOrderByIdAsc(Long payrollRunId);
+
+    /**
+     * Phase 10 report foundation. Payroll cost is defined as {@code SUM(grossPay)} -- never
+     * basePay or netPay. Only CALCULATED and COMPLETED runs are included: a FAILED run's
+     * transaction never inserts any Payslip row (PayrollRunTransactionService.calculate() is the
+     * only place that does so, and it is what transitions PROCESSING -> CALCULATED), so this
+     * status filter is an explicit, defensive statement of that invariant rather than the sole
+     * mechanism -- a stray/anomalous payslip under any other status is still excluded on purpose.
+     * Only months with at least one qualifying payslip are returned; ordered by periodMonth so a
+     * caller never has to re-sort. Never casts through double.
+     */
+    @Query("""
+            SELECT new com.hrpayroll.backend.reports.MonthlyPayrollCostSummary(pr.periodMonth, SUM(p.grossPay))
+            FROM Payslip p JOIN p.payrollRun pr
+            WHERE pr.periodYear = :year
+              AND pr.status IN (com.hrpayroll.backend.payroll.PayrollRunStatus.CALCULATED, com.hrpayroll.backend.payroll.PayrollRunStatus.COMPLETED)
+            GROUP BY pr.periodMonth
+            ORDER BY pr.periodMonth ASC
+            """)
+    List<MonthlyPayrollCostSummary> findMonthlyGrossPayTotals(@Param("year") int year);
+
+    /**
+     * Same status rule as {@link #findMonthlyGrossPayTotals}. COALESCE guarantees a real
+     * BigDecimal zero (never null) when no qualifying payslip exists for the year -- a plain
+     * {@code SUM(...)} over zero rows returns SQL NULL in both JPQL and PostgreSQL.
+     */
+    @Query("""
+            SELECT COALESCE(SUM(p.grossPay), 0)
+            FROM Payslip p JOIN p.payrollRun pr
+            WHERE pr.periodYear = :year
+              AND pr.status IN (com.hrpayroll.backend.payroll.PayrollRunStatus.CALCULATED, com.hrpayroll.backend.payroll.PayrollRunStatus.COMPLETED)
+            """)
+    BigDecimal findAnnualGrossPayTotal(@Param("year") int year);
 }

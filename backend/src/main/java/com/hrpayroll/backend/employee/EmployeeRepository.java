@@ -1,5 +1,6 @@
 package com.hrpayroll.backend.employee;
 
+import com.hrpayroll.backend.reports.DepartmentHeadcountSummary;
 import jakarta.persistence.LockModeType;
 import java.time.LocalDate;
 import java.util.List;
@@ -71,4 +72,27 @@ public interface EmployeeRepository extends JpaRepository<Employee, Long> {
             @Param("departmentId") Long departmentId,
             @Param("status") EmploymentStatus status,
             Pageable pageable);
+
+    /** Phase 10 report foundation. Plain Spring Data derived count -- no custom JPQL needed. */
+    long countByEmploymentStatus(EmploymentStatus employmentStatus);
+
+    /**
+     * Phase 10 report foundation. Current ACTIVE headcount grouped by the employee's current
+     * department -- represents current state only (see {@link DepartmentHeadcountSummary}'s own
+     * Javadoc for why historical headcount is not attempted). ACTIVE is fixed in the query itself
+     * (not a parameter): the approved report definition is ACTIVE-only, so there is no status
+     * filter for a future caller to accidentally widen or omit. A department with zero current
+     * ACTIVE employees is never returned -- no report requirement needs an outer-joined zero row.
+     * Ordered by department name then id so results are always deterministic even if two
+     * departments' names were ever equal in a future locale-insensitive comparison (they cannot
+     * be today: {@code uq_departments_name} guarantees uniqueness).
+     */
+    @Query("""
+            SELECT new com.hrpayroll.backend.reports.DepartmentHeadcountSummary(d.id, d.name, COUNT(e))
+            FROM Employee e JOIN e.department d
+            WHERE e.employmentStatus = com.hrpayroll.backend.employee.EmploymentStatus.ACTIVE
+            GROUP BY d.id, d.name
+            ORDER BY d.name ASC, d.id ASC
+            """)
+    List<DepartmentHeadcountSummary> findActiveHeadcountByDepartment();
 }
