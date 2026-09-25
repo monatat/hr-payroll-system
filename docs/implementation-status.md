@@ -2756,5 +2756,96 @@ browser verification.
 **Phase 10A: Complete.** Phase 10 remains In progress overall; only the backend aggregate-query
 foundation exists.
 
+### Phase 10B — Secured backend reports service and API
+
+**Status: Complete.**
+
+- **Scope**: secured service/HTTP layer only, built entirely on the committed Phase 10A query
+  foundation. No frontend code, route, sidebar item, chart, export, migration, or dependency was
+  added, and no manual browser verification was performed (deferred, see below).
+- **Endpoints**, both under `/api/reports`, gated by a single class-level
+  `@PreAuthorize("hasRole('HR_ADMIN')")` on `ReportController` (mirroring `LeaveBalanceController`'s
+  exact precedent) so an `EMPLOYEE` or unauthenticated caller is rejected before either method body
+  ever runs:
+  - `GET /api/reports/payroll-cost?year=YYYY` — required `year` query parameter, no request body.
+  - `GET /api/reports/headcount` — no parameters, no request body.
+  - Neither endpoint accepts an `employeeId`/`userId`/`actorId`/`departmentId`/status/sort/page/size
+    parameter; any such extra query parameter sent by a caller is simply ignored by Spring MVC and
+    has no effect on the response.
+- **New package contents** (`com.hrpayroll.backend.reports`), all separate from the Phase 10A
+  repository projections:
+  - `MonthlyPayrollCostResponse(int periodMonth, BigDecimal totalGrossPay)` and
+    `DepartmentHeadcountResponse(Long departmentId, String departmentName, long activeEmployeeCount)`
+    — each with a `from(...)` mapping factory from its Phase 10A projection, mirroring
+    `PayrollRunResponse.from`'s exact convention.
+  - `PayrollCostReportResponse(int year, BigDecimal annualTotalGrossPay, List<MonthlyPayrollCostResponse> monthlyTotals)`
+    and `HeadcountReportResponse(long totalActiveEmployees, List<DepartmentHeadcountResponse> departments)`
+    — both defensively copy their list component via `List.copyOf(...)` in a compact constructor,
+    guaranteeing a non-null, immutable snapshot regardless of caller.
+  - `ReportService` (`@Service`, `@Transactional(readOnly = true)`, mirroring `PayrollQueryService`):
+    `getPayrollCostReport(int year)` validates `year` against the exact existing 2000-2100 range
+    already enforced by `PayrollPeriod.of`/`PayrollQueryService.listRuns` (reused, not reinvented),
+    then maps `PayslipRepository.findMonthlyGrossPayTotals`/`findAnnualGrossPayTotal` directly with
+    no aggregation performed in Java; `getHeadcountReport()` maps
+    `EmployeeRepository.findActiveHeadcountByDepartment`/`countByEmploymentStatus(ACTIVE)` the same
+    way. Neither method injects or calls `AuditService`, logs a payload, uses `double`/`float`, or
+    accepts an authenticated-user/employee/department/status/identity argument.
+  - `ReportController` (`@RestController`) delegates only to `ReportService` — no repository access,
+    no manual JWT decoding, no audit-record creation, and no `@AuthenticationPrincipal` parameter on
+    either method (no report needs the caller's identity).
+- **Year validation/error behavior**: an out-of-range year reuses the existing
+  `InvalidPayrollPeriodException` → `PayrollExceptionHandler` → `400 Bad Request` /
+  `INVALID_PAYROLL_PERIOD` path unchanged (no new exception or handler was created for this case).
+  A missing or non-numeric `year` is handled entirely by Spring Boot's existing
+  `spring.mvc.problemdetails.enabled=true` default `400` behavior, confirmed empirically to contain
+  no SQL, JPQL, stack trace, or internal class name — so no additional exception handler was needed
+  for either case.
+- **RED confirmation**: `ReportServiceTest`/`ReportControllerTest` initially failed to compile with
+  genuine "cannot find symbol" errors for `ReportService`, `PayrollCostReportResponse`, and
+  `HeadcountReportResponse` -- confirmed before any production code was written.
+- **Tests**: two new focused classes, 44 tests total, no fixture helper duplicated (the existing
+  Phase 10A `ReportTestFixtures` department/employee/payroll-run/payslip helpers were reused
+  unchanged; no persisted `users` row is needed for either test principal, since
+  `JwtAuthenticationFilter` resolves authentication entirely from the validated JWT's claims with no
+  per-request database lookup, and neither report endpoint ever calls `AuditService` -- the only
+  path that would require an existing `users` row for a foreign key).
+  - `ReportControllerTest` (36 tests, `@SpringBootTest` + `@AutoConfigureMockMvc`, real PostgreSQL,
+    real Spring Security filter chain, real JWT tokens): authorization (401/403/200 for both
+    endpoints), exact annual/monthly payroll-cost values, ascending month ordering,
+    CALCULATED/COMPLETED inclusion and PROCESSING/FAILED exclusion (with anomalous fixture rows),
+    cross-year exclusion, empty-year zero/empty-list behavior, exact BigDecimal cent precision, no
+    employee-identity/compensation field in either response body, exact/delta-based ACTIVE headcount
+    correctness, department grouping/ordering/omission-when-INACTIVE-only, missing/non-numeric/
+    out-of-range year all returning a safe 400 (body asserted free of `Exception`/SQL/stack-trace/
+    `java.lang` text), a fixed `ProblemDetail` shape (`status`/`title`/`detail`) on the out-of-range
+    case, no audit-log row on success or on a forbidden/unauthorized/invalid request, no mutation of
+    any `payroll_runs`/`payslips`/`employees`/`departments`/`users` row, both response lists
+    serializing as a JSON array (never null), no repository projection class name in either response
+    body, and extra client-supplied `employeeId`/`userId`/`departmentId` query parameters being
+    silently ignored.
+  - `ReportServiceTest` (8 tests, pure Mockito unit test mirroring `BootstrapAdminRunnerTest`'s
+    precedent, no Spring context): proves two behaviors the real-database integration test cannot
+    observe -- that `annualTotalGrossPay`/`totalActiveEmployees` come from their own dedicated
+    repository queries and are never resummed/recounted in Java (by mocking the two sources to
+    deliberately disagree and asserting the authoritative one wins), and the exact empty-repository
+    mapping to a zero total and an empty (never null) list for both reports, since headcount has no
+    scoping dimension like payroll's `year` and so can never be forced to zero against the shared
+    integration database's real ACTIVE employees. Also confirms an out-of-range year is rejected
+    before either repository is ever touched.
+- **Focused/combined/full test totals**: 44 new Phase 10B tests; combined with the 22 existing Phase
+  10A repository tests, 66 report tests total; full backend suite
+  (`./mvnw.cmd clean verify`) — **571 tests, 0 failures, 0 errors, 3 skipped** (previous baseline 527
+  tests, 0 failures, 0 errors, 3 pre-existing skips; the increase is exactly the 44 new tests, and
+  the same 3 pre-existing skips remain in the same two classes as before). Flyway validated the same
+  13 migrations with no new migration added. `backend/pom.xml` and the entire `frontend/` tree are
+  unchanged -- no frontend test or build was run, since no frontend code changed.
+- **Frontend deferral**: the HR Admin-facing reports page, its route/sidebar entry, any chart or
+  export, and manual browser verification are explicitly deferred to Phase 10C/10D -- nothing in
+  this sub-phase renders or fetches these endpoints from a browser context.
+
+**Phase 10B: Complete.** Phase 10 remains In progress overall; the backend report query and secured
+HTTP API are complete, while the frontend reports surface and manual browser verification remain
+deferred.
+
 ## Phases 11–13
 Status: Not started.
