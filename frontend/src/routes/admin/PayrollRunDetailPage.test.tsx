@@ -656,6 +656,24 @@ describe('PayrollRunDetailPage', () => {
       await screen.findByText('EMP001')
       expect(screen.queryByText(/pdfPath/i)).not.toBeInTheDocument()
     })
+
+    // jsdom performs no layout, so this guards the containment structure rather than pixel widths:
+    // the sr-only "Actions" header is absolutely positioned, and without a positioned scroll wrapper
+    // it escapes overflow-x-auto and widens the whole page (confirmed in a real browser, Phase 10E).
+    it('keeps the table and its visually-hidden header inside a positioned overflow-x-auto container', async () => {
+      vi.mocked(payrollApi.listPayrollRunPayslips).mockResolvedValue(onePagePayslips([payslip()]))
+      renderPage()
+
+      const table = await screen.findByRole('table', { name: 'Payslips for this payroll run' })
+      await within(table).findByText('EMP001')
+      const wrapper = table.parentElement!
+      expect(wrapper).toHaveClass('overflow-x-auto')
+      expect(wrapper).toHaveClass('relative')
+
+      const actionsHeader = within(table).getByRole('columnheader', { name: 'Actions' })
+      expect(within(actionsHeader).getByText('Actions')).toHaveClass('sr-only')
+      expect(wrapper).toContainElement(actionsHeader)
+    })
   })
 
   // ---- Download ----

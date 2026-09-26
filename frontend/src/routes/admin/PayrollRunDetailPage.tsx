@@ -385,7 +385,7 @@ export function PayrollRunDetailPage() {
             {payslipError}
           </p>
         )}
-        <div className="mt-4 overflow-x-auto">
+        <div className="relative mt-4 overflow-x-auto">
           <table className="min-w-full divide-y divide-slate-200 text-sm">
             <caption className="sr-only">Payslips for this payroll run</caption>
             <thead>
