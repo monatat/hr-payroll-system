@@ -32,6 +32,7 @@ function renderLayout(initialEntry: string) {
             <Route path="/admin/leave" element={<h1>Leave Requests</h1>} />
             <Route path="/admin/leave/:id" element={<h1>Leave Detail</h1>} />
             <Route path="/admin/payroll" element={<h1>Payroll Runs</h1>} />
+            <Route path="/admin/reports" element={<h1>Reports</h1>} />
             <Route path="/employee" element={<h1>Employee Dashboard</h1>} />
             <Route path="/employee/profile" element={<h1>My Profile</h1>} />
             <Route path="/employee/salary" element={<h1>Salary History</h1>} />
@@ -97,6 +98,7 @@ describe('AppLayout', () => {
       expect(within(nav).queryByRole('link', { name: 'Manage Employees' })).not.toBeInTheDocument()
       expect(within(nav).queryByRole('link', { name: 'Leave Requests' })).not.toBeInTheDocument()
       expect(within(nav).queryByRole('link', { name: 'Payroll' })).not.toBeInTheDocument()
+      expect(within(nav).queryByRole('link', { name: 'Reports' })).not.toBeInTheDocument()
     })
 
     it('links My Payslips to the exact approved href', () => {
@@ -161,7 +163,7 @@ describe('AppLayout', () => {
       sessionStorage.setItem('hr_payroll_access_token', fakeToken('HR_ADMIN'))
     })
 
-    it('shows exactly the five admin sidebar items and no employee items', () => {
+    it('shows exactly the six admin sidebar items and no employee items', () => {
       renderLayout('/admin')
 
       const nav = screen.getByRole('navigation')
@@ -172,11 +174,30 @@ describe('AppLayout', () => {
         'Manage Employees',
         'Leave Requests',
         'Payroll',
+        'Reports',
       ])
       expect(within(nav).queryByRole('link', { name: 'My Profile' })).not.toBeInTheDocument()
       expect(within(nav).queryByRole('link', { name: 'Salary History' })).not.toBeInTheDocument()
       expect(within(nav).queryByRole('link', { name: 'My Leave' })).not.toBeInTheDocument()
       expect(within(nav).queryByRole('link', { name: 'My Attendance' })).not.toBeInTheDocument()
+    })
+
+    it('links Reports to the exact approved href and it appears exactly once', () => {
+      renderLayout('/admin')
+
+      const nav = screen.getByRole('navigation')
+      const reportsLinks = within(nav).getAllByRole('link', { name: 'Reports' })
+      expect(reportsLinks).toHaveLength(1)
+      expect(reportsLinks[0]).toHaveAttribute('href', '/admin/reports')
+    })
+
+    it('navigates to /admin/reports via the sidebar Reports link', async () => {
+      const user = userEvent.setup()
+      renderLayout('/admin')
+
+      await user.click(screen.getByRole('link', { name: 'Reports' }))
+
+      expect(await screen.findByRole('heading', { name: 'Reports' })).toBeInTheDocument()
     })
 
     it('shows HR Admin as a non-link role label and Logout in the header', () => {
@@ -219,6 +240,7 @@ describe('AppLayout', () => {
       expect(screen.getByRole('link', { name: 'Manage Employees' })).toHaveAttribute('href', '/admin/employees')
       expect(screen.getByRole('link', { name: 'Leave Requests' })).toHaveAttribute('href', '/admin/leave')
       expect(screen.getByRole('link', { name: 'Payroll' })).toHaveAttribute('href', '/admin/payroll')
+      expect(screen.getByRole('link', { name: 'Reports' })).toHaveAttribute('href', '/admin/reports')
     })
 
     it('navigates to /admin/payroll via the sidebar Payroll link', async () => {

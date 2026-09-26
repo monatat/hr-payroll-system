@@ -2928,5 +2928,92 @@ deferred.
 data foundation are complete, while the HR Admin reports page and manual browser verification
 remain deferred.
 
+### Phase 10D — HR Admin Reports page, route, and sidebar
+
+**Status: Complete.**
+
+- **Scope**: the real `/admin/reports` page replaced the final `PlaceholderPage` at that route,
+  built entirely on the committed Phase 10B backend contract and Phase 10C `reports.ts` API/types.
+  No chart, export/download, client-side aggregation/sorting/filtering, backend file, migration,
+  or dependency was added; `getPayrollCostReport`/`getHeadcountReport` and both existing formatters
+  are unchanged.
+- **Route**: `App.tsx`'s existing `/admin/reports` route keeps its unchanged
+  `<ProtectedRoute allowedRoles={['HR_ADMIN']}>` wrapper; only the element inside it was swapped
+  from `PlaceholderPage` to `ReportsPage`. No second route and no Employee-facing reports route
+  were added.
+- **Sidebar**: exactly one new `HR_ADMIN_ITEMS` entry, `{ label: 'Reports', to: '/admin/reports' }`,
+  appended after `Payroll` (preserving every existing item's order); no `EMPLOYEE_ITEMS` entry was
+  added. The stale "still an unfinished placeholder" comment above `HR_ADMIN_ITEMS` was removed.
+- **`ReportsPage`** (`frontend/src/routes/admin/ReportsPage.tsx`): an `h1` "Reports" followed by two
+  fully independent sections, each with its own loading/error/data state and its own `useEffect`:
+  - **Payroll Cost**: a labelled Year `<select>` (options restricted to exactly 2000-2100, defaulting
+    to the current calendar year clamped into that range), a visible "Annual Payroll Cost" value,
+    and a monthly table (`Month`, `Gross Payroll Cost` columns). Changing the year re-runs only the
+    payroll effect (`[year]` dependency); headcount's effect (`[]` dependency) never re-runs.
+    Stale-response protection reuses this project's existing closure-scoped `cancelled` flag
+    convention (the same pattern already used by `PayrollRunListPage`/`AttendancePage`): a year
+    change's cleanup marks the previous effect's own `cancelled` true before the new effect's
+    independent `cancelled` starts fresh, so a slower, older-year response can never overwrite a
+    newer selection. Empty months render "No payroll cost data for this year." while still showing
+    the authoritative (possibly zero) annual total above it.
+  - **Current Headcount**: a visible "Total Active Employees" value and a department table
+    (`Department`, `Active Employees` columns), fetched once, independent of the payroll year.
+    Empty departments render "No active employees found." while still showing the authoritative
+    (possibly zero) total above it.
+  - Every rendered value/order is exactly what the backend returned -- this page never sums,
+    recounts, sorts, filters, or fills in a missing month; `annualTotalGrossPay` and
+    `totalActiveEmployees` are always the backend's own field, proven with deliberately-inconsistent
+    mocked data in tests. `formatMYR`/`formatPayrollPeriod` are reused unchanged for all monetary/
+    period display; no raw ISO date and no employee-level field is ever rendered (neither API type
+    carries one). A failed section shows one of two fixed, safe messages --
+    "Could not load payroll cost report. Please try again." or
+    "Could not load headcount report. Please try again." -- inside a `role="alert"` element,
+    regardless of the real error's content; a failure in one section never blocks the other, and a
+    payroll failure is naturally retried by changing the year (no separate Retry control exists).
+    Tables use the established `overflow-x-auto` wrapper and an `sr-only` accessible `<caption>`;
+    no chart/canvas/SVG, export/download control, or employee-identity input exists anywhere on the
+    page.
+- **RED-first evidence**:
+  - `ReportsPage.test.tsx` initially failed with a genuine Vite module-resolution error
+    ("Failed to resolve import './ReportsPage'").
+  - New `App.test.tsx` route tests run against the unchanged placeholder confirmed genuine RED for
+    "HR_ADMIN reaches the real Reports page" specifically (the old placeholder text was still
+    present); the three companion tests (unauthenticated redirect, EMPLOYEE blocked, no
+    Employee-facing reports route) already passed before the route swap, since they do not depend
+    on the new page's content -- recorded accurately rather than claimed as RED.
+  - New `AppLayout.test.tsx` sidebar tests run against the unchanged `Sidebar.tsx` failed genuinely
+    (no "Reports" link existed yet): the six-item-list assertion, the Reports-href assertion, the
+    Reports-navigation assertion, and the updated "every sidebar item has the exact href" assertion
+    all failed for that reason; the remaining, unrelated sidebar tests were unaffected.
+  - Three test-only defects were found and fixed during GREEN, all in `ReportsPage.test.tsx`, none
+    requiring a production-code change: (1) MYR amounts were queried with the same literal `RM<NBSP>`
+    string `formatMYR` itself produces, but Testing Library's default text normalizer collapses all
+    whitespace (NBSP included) to a plain space before a `getByText` comparison runs, so the DOM
+    query needed a plain space instead; (2) two accessibility tests and one responsive-container
+    test omitted their own `render()` call and relied on a previous test's now-cleaned-up DOM; (3) a
+    rerender test asserted 2 calls under a mistaken belief that React Testing Library's `rerender`
+    performs a second independent mount, when it actually re-renders the same mounted instance in
+    place, so the correct expectation is 1 call.
+- **Tests**: `ReportsPage.test.tsx` is new (29 tests); `App.test.tsx` gained 4 tests (unauthenticated
+  redirect, EMPLOYEE blocked, HR_ADMIN reaches the real page, no Employee-facing reports route);
+  `AppLayout.test.tsx` gained 2 tests (Reports href/uniqueness, Reports navigation) alongside
+  updates to 3 existing assertions (six-item list, per-item href list, Employee-sidebar exclusion).
+- **Focused/broader/full test totals**: focused `ReportsPage.test.tsx` -- 29 tests; new route tests
+  -- 4; new sidebar tests -- 2; net-new frontend tests -- 35 (1 new test file); broader affected
+  group (`reports.test.ts`, `ReportsPage.test.tsx`, `App.test.tsx`, `AppLayout.test.tsx`,
+  `currency.test.ts`, `payrollPeriod.test.ts`) -- 6 files, 137 tests; full frontend suite
+  (`npx vitest run --no-file-parallelism`) -- **27 test files, 515 tests, 0 failures, 0 skipped**
+  (previous baseline 480 tests across 26 files; the increase is exactly the 35 net-new tests and 1
+  new file). Production build (`npm run build`) succeeded. Backend was not touched and its tests
+  were not rerun.
+- **Cleanliness**: no backend file, migration, or dependency changed; `package.json`/
+  `package-lock.json` unchanged; the committed Phase 10C `reports.ts` and both existing formatters
+  (`formatMYR`, `formatPayrollPeriod`) are byte-for-byte unchanged.
+- **Deferral**: focused manual browser verification of the real Reports page is deferred to
+  Phase 10E -- nothing in this sub-phase was exercised in a real browser.
+
+**Phase 10D: Complete.** Phase 10 remains In progress overall; the complete backend and frontend
+reports feature now exists, while focused manual browser verification remains deferred.
+
 ## Phases 11–13
 Status: Not started.

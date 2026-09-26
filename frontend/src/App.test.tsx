@@ -247,6 +247,39 @@ describe('App', () => {
     expect(screen.getByRole('heading', { name: 'Payroll Runs' })).toBeInTheDocument()
   })
 
+  it('redirects an unauthenticated visitor away from /admin/reports to login', () => {
+    renderApp('/admin/reports')
+
+    expect(screen.getByRole('heading', { name: 'Sign in' })).toBeInTheDocument()
+  })
+
+  it('blocks an authenticated EMPLOYEE from /admin/reports', () => {
+    sessionStorage.setItem('hr_payroll_access_token', fakeToken('EMPLOYEE', 7))
+
+    renderApp('/admin/reports')
+
+    expect(screen.getByRole('heading', { name: 'Not authorized' })).toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: 'Reports' })).not.toBeInTheDocument()
+  })
+
+  it('allows an authenticated HR_ADMIN into the real /admin/reports page (not the old placeholder)', () => {
+    sessionStorage.setItem('hr_payroll_access_token', fakeToken('HR_ADMIN'))
+
+    renderApp('/admin/reports')
+
+    expect(screen.getByRole('heading', { name: 'Reports' })).toBeInTheDocument()
+    expect(screen.queryByText('Payroll cost and headcount reports.')).not.toBeInTheDocument()
+    expect(screen.queryByText(/placeholder screen/i)).not.toBeInTheDocument()
+  })
+
+  it('introduces no Employee-facing reports route', () => {
+    sessionStorage.setItem('hr_payroll_access_token', fakeToken('EMPLOYEE', 7))
+
+    renderApp('/employee/reports')
+
+    expect(screen.getByText('404 — Page not found')).toBeInTheDocument()
+  })
+
   it('redirects an unauthenticated visitor away from /admin/payroll/:id to login', () => {
     renderApp('/admin/payroll/1')
 

@@ -11,6 +11,7 @@ import { LeaveRequestDetailPage } from './routes/admin/LeaveRequestDetailPage'
 import { LeaveRequestListPage } from './routes/admin/LeaveRequestListPage'
 import { PayrollRunDetailPage } from './routes/admin/PayrollRunDetailPage'
 import { PayrollRunListPage } from './routes/admin/PayrollRunListPage'
+import { ReportsPage } from './routes/admin/ReportsPage'
 import { SalaryHistoryPage as AdminSalaryHistoryPage } from './routes/admin/SalaryHistoryPage'
 import { AttendancePage } from './routes/employee/AttendancePage'
 import { EmployeeProfilePage } from './routes/employee/EmployeeProfilePage'
@@ -121,7 +122,7 @@ function App() {
           path="/admin/reports"
           element={
             <ProtectedRoute allowedRoles={['HR_ADMIN']}>
-              <PlaceholderPage title="Reports" description="Payroll cost and headcount reports." />
+              <ReportsPage />
             </ProtectedRoute>
           }
         />
