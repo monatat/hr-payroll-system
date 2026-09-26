@@ -2847,5 +2847,86 @@ foundation exists.
 HTTP API are complete, while the frontend reports surface and manual browser verification remain
 deferred.
 
+### Phase 10C — Frontend reports API and type foundation
+
+**Status: Complete.**
+
+- **Scope**: frontend data-layer only (`frontend/src/api/reports.ts` + its test). No Reports page,
+  route replacement, sidebar item, component, chart, export, state-management abstraction, backend
+  change, migration, or dependency was added. `/admin/reports` still renders `PlaceholderPage` in
+  `App.tsx`, and `Sidebar.tsx` still has no reports entry -- both confirmed untouched.
+- **Four exported types**, matching the committed Phase 10B backend response records field-for-field
+  and named without a `Response` suffix (this project's established convention: `PayrollRunResponse`
+  -> `PayrollRun`, `PayslipResponse` -> `Payslip`, `AttendanceResponse` -> `AttendanceRecord`):
+  - `MonthlyPayrollCost { periodMonth: number; totalGrossPay: number }`
+  - `PayrollCostReport { year: number; annualTotalGrossPay: number; monthlyTotals: MonthlyPayrollCost[] }`
+  - `DepartmentHeadcount { departmentId: number; departmentName: string; activeEmployeeCount: number }`
+  - `HeadcountReport { totalActiveEmployees: number; departments: DepartmentHeadcount[] }`
+  - BigDecimal wire values (`annualTotalGrossPay`/`totalGrossPay`) are typed as plain `number`,
+    matching every existing payroll amount in this project (e.g. `Payslip.netPay`).
+- **Two exported functions**, both using only the existing shared `apiClient` (no direct `axios`
+  import, no manual JWT attachment/decoding):
+  - `getPayrollCostReport(year: number): Promise<PayrollCostReport>` -- `GET /api/reports/payroll-cost`
+    with exactly `{ params: { year } }`, no request body, no employee/caller-identity parameter.
+  - `getHeadcountReport(): Promise<HeadcountReport>` -- `GET /api/reports/headcount` with no params
+    object and no request body at all.
+  - Both return `response.data` unchanged: no sorting, filtering, summing, counting, rounding,
+    month-filling, or any other mutation of the backend's response. The backend's authoritative
+    `annualTotalGrossPay`/`totalActiveEmployees` and its ordering are trusted as-is and never
+    recomputed client-side. No client-side year-range validation was added -- the backend remains
+    authoritative; that belongs to a future page's UI input constraints, not this data-layer module.
+  - Errors from `apiClient` propagate as an ordinary rejected promise, unchanged -- this module
+    never catches or rewrites them.
+- **Formatter reuse decision**: Phase 10C deliberately adds no new formatter. The existing
+  `formatMYR(amount: number): string` (`frontend/src/utils/currency.ts`) and
+  `formatPayrollPeriod(month: number, year: number): string`
+  (`frontend/src/utils/payrollPeriod.ts`) both already accept exactly the numeric shapes these new
+  types carry (`totalGrossPay`/`annualTotalGrossPay` as `number`; `periodMonth`/`year` as `number`),
+  so both are reusable unchanged by a future Reports page -- confirmed by reading both files; neither
+  was modified. `reports.ts` itself performs no formatting -- that belongs to the future UI layer.
+- **RED confirmation**: `reports.test.ts` initially failed with a genuine Vite module-resolution
+  error ("Failed to resolve import './reports'") -- confirmed before any production code was
+  written.
+- **Tests**: one new focused file, `frontend/src/api/reports.test.ts` (22 tests, mocking only the
+  shared `apiClient`, following `payroll.test.ts`/`attendance.test.ts` conventions exactly). Covers
+  the exact request shape for both endpoints (including the absence of any
+  employeeId/userId/actorId/departmentId/status/sort/page/size parameter), `response.data`
+  returned by reference, exact preservation of array ordering and empty arrays, exact preservation
+  of decimal aggregate values, two deliberate-inconsistency proofs that neither
+  `annualTotalGrossPay` nor `totalActiveEmployees` is ever recomputed client-side from the
+  per-month/per-department rows, rejected-promise propagation for both endpoints, and (via typed
+  object literals assigned to each exported type, backed by a runtime `Object.keys` comparison)
+  representative-shape checks for all four types. The exact exported type declarations in
+  `reports.ts` are the source of truth for the complete field set (including the absence of any
+  employee id/name/code/email/IC/salary-structure/payslip field and of any additional optional
+  field) and were directly reviewed; the typed-literal/`Object.keys` checks are complementary
+  compile-time/runtime evidence using representative sample values, not a substitute for that
+  review. Two source-text-scanning tests originally planned for "no broad `any` type" and "no
+  direct axios import or manual JWT logic" were removed during GREEN: this project's browser-facing
+  `tsconfig.app.json` (which type-checks every file under `src`, tests included) declares no Node
+  types, so a `fs`-based source scan only compiles by adding `@types/node` to that config -- a
+  dependency/config change outside this sub-phase's scope. Both properties were instead confirmed
+  by direct source review of `reports.ts` (its only import is `{ apiClient } from './client'`,
+  with no manual authorization/JWT logic anywhere in the file); the request-shape tests separately
+  verify the exact arguments used by the current API calls, but -- being tests of this module's
+  present behavior rather than of its import list -- they do not themselves guarantee that a
+  hypothetical future unrelated direct-Axios call could never be added elsewhere in the file.
+- **Focused/broader/full test totals**: 22 new Phase 10C tests; the broader `src/api`/`src/utils`
+  group -- 9 files, 128 tests -- passes; full frontend suite (`npx vitest run --no-file-parallelism`)
+  -- **26 test files, 480 tests, 0 failures, 0 skipped** (previous baseline 458 tests across 25
+  files, 0 failures, 0 skipped; the increase is exactly the 22 new tests and 1 new file). Production
+  build (`npm run build`) succeeded. Backend was not touched and its tests were not rerun.
+- **Cleanliness**: no backend file, migration, or dependency changed; `package.json`/
+  `package-lock.json` unchanged; `App.tsx`, `App.test.tsx`, `Sidebar.tsx`, and the `AppLayout` tests
+  are all unchanged; no page/component/route/hook/context was added.
+- **Deferral**: the HR Admin-facing Reports page itself, its route replacing the `/admin/reports`
+  placeholder, the sidebar entry, any chart/export, and manual browser verification are all
+  explicitly deferred to Phase 10D/10E -- nothing in this sub-phase renders anything or is exercised
+  from a browser context.
+
+**Phase 10C: Complete.** Phase 10 remains In progress overall; the backend reports API and frontend
+data foundation are complete, while the HR Admin reports page and manual browser verification
+remain deferred.
+
 ## Phases 11–13
 Status: Not started.
