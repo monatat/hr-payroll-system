@@ -3015,5 +3015,90 @@ remain deferred.
 **Phase 10D: Complete.** Phase 10 remains In progress overall; the complete backend and frontend
 reports feature now exists, while focused manual browser verification remains deferred.
 
+### Phase 10E — HR Admin reports manual browser verification
+Status: **Complete.** Full manual browser verification of the Phase 10A through 10D HR Admin reports
+feature, performed against a live backend/frontend/PostgreSQL stack with temporary fixtures
+(`MANUAL_10E_20260926`-prefixed departments, employees, users, 2091 payroll runs, and payslips),
+tracked in an external cleanup ledger outside the repository, and fully removed after verification.
+
+- **Authorization/navigation**: logged-out route protection passed; HR_ADMIN had exactly one
+  `Reports` sidebar link and could reach `/admin/reports` directly; EMPLOYEE had no Reports sidebar
+  item, direct navigation to `/admin/reports` was blocked, and no report data was exposed to
+  EMPLOYEE (both report endpoints returned `403`).
+- **Payroll cost**: the default year (2026) showed the authoritative zero total and the empty state;
+  seeded year 2091 showed an annual total of `11056.65`, with monthly rows March `5501.00` then
+  November `5555.65` in the backend's chronological order; missing months were not synthesized;
+  deliberately-anomalous payslips under PROCESSING and FAILED runs were excluded, and no base-pay/
+  net-pay figure was substituted for gross pay; empty year 2092 showed a zero total and no monthly
+  rows; no chart, export/download control, or employee-level data exists.
+- **Headcount**: the total ACTIVE count was `5` during fixture testing (2 pre-existing + 3 fixture
+  employees); the current department breakdown (IT 2, Alpha 2, Beta 1) matched the backend with
+  deterministic name ordering (a lower-id department sorted after a later-named one); INACTIVE
+  employees and an INACTIVE-only department were excluded; no historical/as-of-date claim and no
+  employee-level row is shown.
+- **Responsive/accessibility/browser verification**: desktop (1440x900), tablet (768x1024), mobile
+  (390x844), and 200% zoom all passed with tables scrolling only inside their own containers;
+  keyboard/focus access and semantic headings/tables/accessible captions passed; loading/error/
+  empty/data states are conveyed as text; Chrome and Firefox both passed.
+- **Persistence**: report results were identical after refresh and after logout/login
+  (PERSIST-01, PERSIST-02), as expected for backend-derived data.
+- **Qualifications**: STATE-01 (visible independent loading states) passed manually. STATE-02 and
+  STATE-03 (one section's fixed safe error while the other keeps rendering) are
+  **AUTOMATED-COVERAGE-ONLY**, because Chrome's network request-blocking command was unavailable,
+  so the failures were not forced manually; they are covered by the committed `ReportsPage.test.tsx`
+  independent-section error tests. NETWORK-01 through NETWORK-03 are
+  **SOURCE-AND-AUTOMATED-COVERAGE**: the committed `reports.ts` source and its tests show payroll cost
+  sends only the `year` query parameter, headcount sends no business parameter, neither sends an
+  employee/user/actor identity or request body, both go through the shared authenticated `apiClient`,
+  and the page performs no aggregation, sorting, or filtering; the backend `ReportController` is
+  class-level HR_ADMIN-only and accepts no client-supplied identity (`ReportControllerTest`).
+  Stale-response race protection remains **AUTOMATED-COVERAGE-ONLY**; safe redaction of backend
+  error detail is covered automatically; the Asia/Kuala_Lumpur New Year rollover of the default year
+  remains **AUTOMATED-COVERAGE-ONLY**. Safari is unavailable on this Windows environment and is
+  recorded as **not applicable**, not failed.
+- **Verification evidence**: direct read-only database reconciliation (not just browser
+  observation) confirmed the report totals and that report GETs are read-only: no report GET
+  (successful, forbidden, unauthenticated, or invalid-year `400 INVALID_PAYROLL_PERIOD`) created an
+  audit row or altered any business table. Temporary manual logins created `LOGIN_SUCCESS` /
+  `LOGIN_FAILED` audit rows, which were retained as evidence.
+- **Manual-testing incident**: during manual testing, fixture payroll run 2749 (Sep 2091, FAILED) was
+  accidentally retried twice through the payroll detail page, producing two
+  `PAYROLL_RUN_RETRIED`/`PAYROLL_RUN_FAILED` audit pairs (`SALARY_COVERAGE_MISSING`). The run remained
+  FAILED (only its `version` and `failure_reason` changed), no payslip changed, report results were
+  unchanged because FAILED runs are excluded, and no pre-existing business row was modified.
+- **Incidental maintenance defect** (payroll detail, not Reports): the valid fixtures exposed a
+  pre-existing whole-page horizontal overflow on the HR Admin payroll run detail page
+  (`/admin/payroll/:id`), reproducible with any run. Root cause: the absolutely positioned `sr-only`
+  "Actions" column header had no positioned ancestor, so it escaped the payslip table's
+  `overflow-x-auto` wrapper and widened the page. Fixed by making that wrapper positioned
+  (`relative mt-4 overflow-x-auto`), with a RED-first structural regression test in
+  `PayrollRunDetailPage.test.tsx`; committed separately as `074710c7e7fd4acc08e8ff3a54258d9a3ae5e901`
+  ("Phase 10E maintenance: contain payroll detail table overflow"). Focused test file 60/60; full
+  frontend suite (`npx vitest run --no-file-parallelism`) -- **27 test files, 516 tests, 0 failures,
+  0 skipped** (previous baseline 515; the increase is exactly the 1 new test); `npm run build`
+  succeeded. Manual retest passed in Chrome and Firefox at 100% and 200% zoom and at 1440x900,
+  768x1024, and 390x844: the table scrolls internally with no page-level overflow, keyboard focus
+  remains usable, the accessible "Actions" header is retained, and the payroll list and Reports pages
+  are unaffected. The same `sr-only`-in-header pattern in three narrower sibling tables was not
+  changed without confirmed evidence of overflow.
+- **Cleanup**: all 6 temporary payslips, 4 temporary payroll runs, 2 temporary users, 5 temporary
+  employees, and 3 temporary departments were deleted by exact recorded id in a single transaction,
+  verified by exact `RETURNING` sets; core table counts returned exactly to the original baseline
+  (users 3, employees 2, departments 1, payroll_runs 0, payslips 0), and pre-existing rows were
+  verified unchanged by checksum. Every audit row created during setup and testing was retained:
+  deleting the temporary users caused PostgreSQL to set those audit rows' `actor_id` values to NULL
+  through the schema's existing `ON DELETE SET NULL` foreign key. No audit row was deleted or manually
+  edited, and `action`, `entity_name`, `entity_id`, `details`, and `created_at` remained unchanged.
+- **Automated baselines**: backend remains the previously documented 571 tests, 0 failures, 0 errors,
+  3 pre-existing skips, with the same 13 Flyway migrations (not rerun during Phase 10E, since no backend
+  code changed). Frontend is 516 tests across 27 files after the maintenance fix above. No migration,
+  backend source, dependency, lockfile, or configuration file changed during Phase 10E.
+
+**Phase 10E: Complete.**
+
+**Phase 10: Complete.** All Phase 10 sub-phases (10A, 10B, 10C, 10D, and 10E) are complete: backend
+report-query foundation, secured HR_ADMIN reports service and API, frontend reports API/type
+foundation, HR Admin Reports page/route/sidebar, and focused manual browser verification.
+
 ## Phases 11–13
 Status: Not started.
