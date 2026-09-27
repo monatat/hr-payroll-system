@@ -3337,5 +3337,74 @@ Status: **Complete.**
 11B HR Admin dashboard, 11C Employee dashboard, and 11D live manual verification, Quick Actions usability
 correction, fixture cleanup, and reconciliation.
 
-## Phases 12–13
+## Phase 12 — Project hardening and portfolio readiness
+
+**Approved direction** (from the Phase 12A audit):
+- Repair confirmed frontend containment defects.
+- Establish safe, opt-in demo readiness -- only if separately approved.
+- Replace stale reviewer-facing documentation.
+- Perform final verification before closure.
+- No new core payroll business feature is implied.
+
+### Phase 12A — Scope, gap, and readiness audit
+
+Status: **Complete.** Read-only audit; no file was changed.
+
+- Phases 12 and 13 previously had no authoritative product definition anywhere in the repository (docs,
+  README, source, tests, configuration, or commit history) -- they were numbering placeholders only.
+- The core application is complete for its documented feature set: every frontend route renders a real
+  page, no route-backed `PlaceholderPage` remains (the component file is now unused), and both role
+  sidebars link only to real, role-appropriate destinations.
+- Backend security, ownership, and DTO boundaries were found sound: only login and health are public;
+  role-specific endpoints carry `@PreAuthorize`; self-service endpoints derive identity from the
+  authenticated principal; by-id payslip/PDF/leave reads enforce ownership (404 to non-owners);
+  controllers return DTOs only; every mutating service records audit events.
+- `README.md` is stale and contradictory (it still describes Phase 5 as current, states that no salary,
+  leave, attendance, payroll, or report functionality exists, and references a non-existent
+  `docs/decisions/` directory).
+- Fresh-clone demo provisioning is absent: there is no way to create EMPLOYEE login accounts or leave
+  balances through the application (both documented as intentionally out of scope), so the Employee side
+  cannot be demonstrated without direct SQL. Any remedy requires a separate decision.
+- Three list pages shared the same unpositioned table-wrapper pattern that caused the Phase 10E
+  payroll-detail overflow. The real application was not started and the actual routes were not opened;
+  isolated headless-browser reproductions of the same DOM/CSS pattern showed page-level overflow for the
+  Admin leave-request and Employee payslip table structures (at tablet and mobile widths respectively).
+  The Payroll Runs structure at 390px was not directly established by 12A, but the same structural
+  correction applies consistently to all three wrappers. Actual-page browser verification remains
+  deferred until after checkpointing.
+- Deployment remains optional (the project is currently designed for local development).
+
+### Phase 12B — List-table containment correction
+
+Status: **Complete.**
+
+- **Pages**: `frontend/src/routes/admin/LeaveRequestListPage.tsx`,
+  `frontend/src/routes/employee/PayslipListPage.tsx`, `frontend/src/routes/admin/PayrollRunListPage.tsx`.
+- **Root cause**: each table's `sr-only` "Actions" column header is absolutely positioned, and its
+  `overflow-x-auto` scroll wrapper had no positioned ancestor, so the header escaped the wrapper's
+  clipping and widened the whole page whenever the table was wider than the content column -- the same
+  root cause as the Phase 10E `PayrollRunDetailPage` fix.
+- **Fix**: `relative` added to each of the three existing wrapper class strings (one word per wrapper);
+  table markup, columns, data, links, the `sr-only` Actions text, API calls, state, and permissions are
+  unchanged.
+- **RED-first evidence**: one structural regression test was added to each page's existing test file
+  ("keeps the … table and its visually-hidden Actions header inside a positioned overflow-x-auto
+  container"), asserting the table's wrapper has `overflow-x-auto` and `relative`, the Actions column
+  header keeps its `sr-only` text, and the wrapper contains it (no pixel/layout assertions, since jsdom
+  performs no layout). RED: exactly the 3 new tests failed on `toHaveClass('relative')` while the other 65
+  tests in those files passed.
+- **Totals**: focused (3 files) -- 68/68; broader group (the 3 page tests plus `App` and `AppLayout`) --
+  145/145; full frontend suite (`npx vitest run --no-file-parallelism`) -- **29 test files, 582 tests,
+  0 failures, 0 skipped** (previous baseline 579; the increase is exactly the 3 new tests).
+  `npm run build` succeeded. Backend untouched and not rerun (remains 571 tests, 0 failures, 0 errors,
+  3 skipped, 13 migrations).
+- No backend, database, dependency, lockfile, migration, API-module, formatter, route, sidebar, or
+  configuration change.
+- A short real-browser responsive verification of the three pages is deferred until after checkpointing.
+
+**Phase 12B: Complete.**
+
+Phase 12 remains **In progress** overall.
+
+## Phase 13
 Status: Not started.

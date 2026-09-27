@@ -430,4 +430,25 @@ describe('PayrollRunListPage', () => {
       await waitFor(() => expect(payrollApi.createPayrollRun).toHaveBeenCalledTimes(2))
     })
   })
+
+  // jsdom performs no layout, so this guards the containment structure rather than pixel widths: the
+  // sr-only "Actions" header is absolutely positioned and, without a positioned scroll wrapper, escapes
+  // overflow-x-auto and widens the whole page (same root cause as the Phase 10E payroll-detail fix).
+  it('keeps the payroll runs table and its visually-hidden Actions header inside a positioned overflow-x-auto container', async () => {
+    vi.mocked(payrollApi.listPayrollRuns).mockResolvedValue({
+      content: [payrollRun()],
+      page: { size: 10, totalElements: 1, totalPages: 1, number: 0 },
+    })
+    renderPage()
+
+    const table = await screen.findByRole('table', { name: 'Payroll runs' })
+    await within(table).findByText('March 2026')
+    const wrapper = table.parentElement!
+    expect(wrapper).toHaveClass('overflow-x-auto')
+    expect(wrapper).toHaveClass('relative')
+
+    const actionsHeader = within(table).getByRole('columnheader', { name: 'Actions' })
+    expect(within(actionsHeader).getByText('Actions')).toHaveClass('sr-only')
+    expect(wrapper).toContainElement(actionsHeader)
+  })
 })

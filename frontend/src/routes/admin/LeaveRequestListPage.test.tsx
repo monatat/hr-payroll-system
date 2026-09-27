@@ -210,4 +210,26 @@ describe('LeaveRequestListPage', () => {
     const link = await screen.findByRole('link', { name: /review/i })
     expect(link).toHaveAttribute('href', '/admin/leave/42')
   })
+
+  // jsdom performs no layout, so this guards the containment structure rather than pixel widths: the
+  // sr-only "Actions" header is absolutely positioned and, without a positioned scroll wrapper, escapes
+  // overflow-x-auto and widens the whole page (reproduced with the same DOM/CSS structure in an isolated
+  // browser-engine check during Phase 12A).
+  it('keeps the requests table and its visually-hidden Actions header inside a positioned overflow-x-auto container', async () => {
+    vi.mocked(leaveApi.listLeaveRequests).mockResolvedValue({
+      content: [leaveRequest()],
+      page: { size: 10, totalElements: 1, totalPages: 1, number: 0 },
+    })
+    renderPage()
+
+    const table = await screen.findByRole('table')
+    await within(table).findByText('E7')
+    const wrapper = table.parentElement!
+    expect(wrapper).toHaveClass('overflow-x-auto')
+    expect(wrapper).toHaveClass('relative')
+
+    const actionsHeader = within(table).getByRole('columnheader', { name: 'Actions' })
+    expect(within(actionsHeader).getByText('Actions')).toHaveClass('sr-only')
+    expect(wrapper).toContainElement(actionsHeader)
+  })
 })

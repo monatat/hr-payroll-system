@@ -72,7 +72,7 @@ export function PayslipListPage() {
         </p>
       )}
 
-      <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white shadow-sm">
+      <div className="relative overflow-x-auto rounded-lg border border-slate-200 bg-white shadow-sm">
         <table className="min-w-full divide-y divide-slate-200 text-sm">
           <caption className="sr-only">My payslips</caption>
           <thead>
