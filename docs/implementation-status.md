@@ -3400,7 +3400,49 @@ Status: **Complete.**
   3 skipped, 13 migrations).
 - No backend, database, dependency, lockfile, migration, API-module, formatter, route, sidebar, or
   configuration change.
-- A short real-browser responsive verification of the three pages is deferred until after checkpointing.
+- **Real-page manual verification and cleanup** (performed after the Phase 12B checkpoint commit; this
+  supersedes the earlier "deferred until after checkpointing" status):
+  - **Scope**: the actual committed routes `/admin/leave`, `/admin/payroll`, and `/employee/payslips` were
+    exercised in a real browser against a live backend/frontend/PostgreSQL stack. The Phase 12A browser work
+    had been only an isolated DOM/CSS reproduction; Phase 12B now has actual-page browser evidence.
+  - **Authorization**: logged-out route protection, HR_ADMIN access to both admin lists, EMPLOYEE blocked
+    from both admin lists, EMPLOYEE access to their own payslip list, and HR_ADMIN blocked from the employee
+    payslip list all passed; no cross-role data leakage occurred.
+  - **Containment**: all three corrected pages passed at 1440x900, 768x1024, 390x844, and 200% browser
+    zoom -- no whole-page horizontal overflow; wide tables scrolled only inside their own containers; the
+    Actions columns and Review/View links remained reachable; row actions were keyboard-accessible with
+    visible focus; the expected fixture rows and monetary values rendered correctly.
+  - **Browsers and regression**: Chrome and Firefox passed; Safari is unavailable on this Windows
+    environment and is recorded as **not applicable**, not failed. The payroll-detail containment regression
+    check (on the fixture payroll run's detail page) passed, and quick overflow sanity checks of the HR Admin
+    dashboard, Employee dashboard, and Reports page passed.
+  - **Evidence classification**: real-page layout/overflow, the responsive sizes, keyboard reachability,
+    rendered values, and role access were manually verified. The structural wrapper assertions remain
+    automated coverage. Pagination, filter behavior, mutation flows, error redaction, stale-response/race
+    behavior, and unrelated feature flows were not manually retested and are not claimed as manually observed.
+  - **Temporary fixtures**: prefix `MANUAL_12B_20260928`, exactly six rows -- 1 employee, 2 users (one
+    HR_ADMIN, one EMPLOYEE linked to that employee), 1 PENDING leave request, 1 COMPLETED August 2026
+    payroll run, and 1 payslip -- tracked in an external cleanup ledger outside the repository. Existing
+    department 332 and leave type 1 were reused read-only; no leave balance, salary structure, attendance,
+    department, leave type, or PDF fixture was created, and no existing row was modified.
+  - **Cleanup**: both recorded Phase 12B server processes were stopped by verified task/PID identity; all
+    six rows were deleted by exact recorded id in one FK-safe transaction, with every `DELETE ... RETURNING`
+    set matching before commit (no prefix-only deletion, no sequence reset, no audit-row deletion).
+    Domain counts returned exactly to the baseline: users 3, employees 2, departments 1, leave_types 2,
+    leave_balances 1, leave_requests 4, payroll_runs 0, payslips 0, salary_structures 0, attendance 0.
+  - **Audit behavior**: four expected `LOGIN_SUCCESS` audit rows were created (ids 6312 and 6313 during
+    setup verification, 6314 and 6315 during manual testing); no domain-mutation audit row was created. All
+    four rows were retained -- no audit row was deleted or manually edited. Deleting the temporary users caused
+    PostgreSQL to set those rows' `actor_id` values to NULL through the existing `ON DELETE SET NULL` foreign
+    key; their `action`, `entity_name`, `entity_id`, `details`, and `created_at` remained unchanged.
+  - **Services and ledger**: ports 8080, 5173, and 5174 were free after cleanup; both PostgreSQL containers
+    remained healthy and unrelated processes/containers were untouched. The external cleanup ledger and logs
+    were preserved outside the repository; the temporary credential and hash files were removed; the external
+    payroll-PDF directory remained empty.
+  - **Automated baselines**: frontend remains 582 tests across 29 files, 0 failures, 0 skipped, with a
+    successful build; backend remains 571 tests, 0 failures, 0 errors, 3 pre-existing skips, 13 migrations
+    (not rerun for Phase 12B). Tests and builds were not rerun during manual verification, cleanup, or this
+    documentation update.
 
 **Phase 12B: Complete.**
 
