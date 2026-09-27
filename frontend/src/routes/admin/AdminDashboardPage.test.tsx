@@ -365,6 +365,20 @@ describe('AdminDashboardPage', () => {
     expect(within(quick).getByRole('link', { name: 'Reports' })).toHaveAttribute('href', '/admin/reports')
   })
 
+  it('places Quick Actions before the Active Employees section (document order), with every link intact', () => {
+    renderPage()
+
+    const quick = section('Quick Actions')
+    const active = section('Active Employees')
+    expect(quick.compareDocumentPosition(active) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(within(quick).getAllByRole('link').map((link) => link.getAttribute('href'))).toEqual([
+      '/admin/employees',
+      '/admin/leave',
+      '/admin/payroll',
+      '/admin/reports',
+    ])
+  })
+
   // ---------------------------------------------------------------- accessibility / scope
 
   it('has exactly one h1 "Admin Dashboard" and an h2 per dashboard section', () => {
@@ -374,10 +388,10 @@ describe('AdminDashboardPage', () => {
     expect(h1s).toHaveLength(1)
     expect(h1s[0]).toHaveTextContent('Admin Dashboard')
     expect(screen.getAllByRole('heading', { level: 2 }).map((heading) => heading.textContent)).toEqual([
+      'Quick Actions',
       'Active Employees',
       'Pending Leave Requests',
       'Latest Payroll Run',
-      'Quick Actions',
     ])
   })
 

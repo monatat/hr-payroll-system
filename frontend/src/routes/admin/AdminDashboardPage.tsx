@@ -117,6 +117,27 @@ export function AdminDashboardPage() {
       </div>
 
       <section
+        aria-labelledby="dashboard-quick-actions"
+        className="rounded-lg border border-slate-200 bg-white p-6 shadow-sm"
+      >
+        <h2 id="dashboard-quick-actions" className="text-sm font-semibold text-slate-900">
+          Quick Actions
+        </h2>
+        <ul className="mt-3 flex flex-wrap gap-3">
+          {QUICK_ACTIONS.map((action) => (
+            <li key={action.to}>
+              <Link
+                to={action.to}
+                className="inline-block rounded-md border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+              >
+                {action.label}
+              </Link>
+            </li>
+          ))}
+        </ul>
+      </section>
+
+      <section
         aria-labelledby="dashboard-active-employees"
         className="rounded-lg border border-slate-200 bg-white p-6 shadow-sm"
       >
@@ -230,27 +251,6 @@ export function AdminDashboardPage() {
             </Link>
           </>
         )}
-      </section>
-
-      <section
-        aria-labelledby="dashboard-quick-actions"
-        className="rounded-lg border border-slate-200 bg-white p-6 shadow-sm"
-      >
-        <h2 id="dashboard-quick-actions" className="text-sm font-semibold text-slate-900">
-          Quick Actions
-        </h2>
-        <ul className="mt-3 flex flex-wrap gap-3">
-          {QUICK_ACTIONS.map((action) => (
-            <li key={action.to}>
-              <Link
-                to={action.to}
-                className="inline-block rounded-md border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
-              >
-                {action.label}
-              </Link>
-            </li>
-          ))}
-        </ul>
       </section>
     </div>
   )

@@ -513,6 +513,21 @@ describe('EmployeeDashboardPage', () => {
     expect(within(quick).getByRole('link', { name: 'Salary History' })).toHaveAttribute('href', '/employee/salary')
   })
 
+  it("places Quick Actions before the Today's Attendance section (document order), with every link intact", () => {
+    renderPage()
+
+    const quick = section('Quick Actions')
+    const attendance = section("Today's Attendance")
+    expect(quick.compareDocumentPosition(attendance) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(within(quick).getAllByRole('link').map((link) => link.getAttribute('href'))).toEqual([
+      '/employee/profile',
+      '/employee/attendance',
+      '/employee/leave',
+      '/employee/payslips',
+      '/employee/salary',
+    ])
+  })
+
   // ---------------------------------------------------------------- accessibility / scope
 
   it('has exactly one h1 "Employee Dashboard" and an h2 per dashboard section', () => {
@@ -522,12 +537,12 @@ describe('EmployeeDashboardPage', () => {
     expect(h1s).toHaveLength(1)
     expect(h1s[0]).toHaveTextContent('Employee Dashboard')
     expect(screen.getAllByRole('heading', { level: 2 }).map((heading) => heading.textContent)).toEqual([
+      'Quick Actions',
       "Today's Attendance",
       'Leave Balances',
       'Recent Leave Requests',
       'Latest Payslip',
       'My Profile',
-      'Quick Actions',
     ])
   })
 

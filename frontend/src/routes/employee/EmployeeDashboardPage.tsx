@@ -180,6 +180,24 @@ export function EmployeeDashboardPage() {
         <p className="mt-1 text-sm text-slate-500">Your attendance, leave, pay, and profile at a glance.</p>
       </div>
 
+      <section aria-labelledby="dashboard-quick-actions" className={CARD_CLASS}>
+        <h2 id="dashboard-quick-actions" className="text-sm font-semibold text-slate-900">
+          Quick Actions
+        </h2>
+        <ul className="mt-3 flex flex-wrap gap-3">
+          {QUICK_ACTIONS.map((action) => (
+            <li key={action.to}>
+              <Link
+                to={action.to}
+                className="inline-block rounded-md border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+              >
+                {action.label}
+              </Link>
+            </li>
+          ))}
+        </ul>
+      </section>
+
       <section aria-labelledby="dashboard-attendance" className={CARD_CLASS}>
         <h2 id="dashboard-attendance" className="text-sm font-semibold text-slate-900">
           Today&apos;s Attendance
@@ -371,24 +389,6 @@ export function EmployeeDashboardPage() {
             </Link>
           </>
         )}
-      </section>
-
-      <section aria-labelledby="dashboard-quick-actions" className={CARD_CLASS}>
-        <h2 id="dashboard-quick-actions" className="text-sm font-semibold text-slate-900">
-          Quick Actions
-        </h2>
-        <ul className="mt-3 flex flex-wrap gap-3">
-          {QUICK_ACTIONS.map((action) => (
-            <li key={action.to}>
-              <Link
-                to={action.to}
-                className="inline-block rounded-md border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
-              >
-                {action.label}
-              </Link>
-            </li>
-          ))}
-        </ul>
       </section>
     </div>
   )
