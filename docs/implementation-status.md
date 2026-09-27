@@ -3263,5 +3263,79 @@ deferred and not started -- nothing in Phase 11B was exercised in a real browser
 verification of both dashboards) is deferred and not started -- nothing in Phase 11C was exercised in a
 real browser.
 
+### Phase 11D — Dashboard manual browser verification
+
+Status: **Complete.**
+
+- **Scope**: focused live-stack manual verification of both completed dashboards -- HR Admin (`/admin`)
+  and Employee (`/employee`) -- against a running backend/frontend/PostgreSQL stack with temporary fixtures
+  (prefix `MANUAL_11D_20260928`) tracked in an external cleanup ledger outside the repository and fully
+  removed afterwards. No dashboard-specific backend endpoint, migration, dependency, persistent reporting
+  table, or production API change was introduced; the existing secured endpoints remained the
+  authoritative sources for every dashboard value.
+- **Authorization/navigation**: logged-out route protection passed for both dashboards; HR_ADMIN could
+  reach only the HR Admin dashboard and its permitted links, and EMPLOYEE only the Employee dashboard and
+  its permitted links; wrong-role dashboard and API access remained blocked (`403` from the other role's
+  endpoints); no cross-role data leakage occurred.
+- **HR Admin dashboard**: manual checks passed for the authoritative active-employee total, the ACTIVE
+  headcount by department (inactive-only departments excluded as designed), the pending-leave total, the
+  latest payroll-run summary (period, visible status, created date, no visible id), and the exact quick
+  links; no employee-level, salary, chart, export, or unsupported report surface appeared.
+- **Employee dashboard**: manual checks passed for the profile summary, current-day attendance, leave
+  balances, recent leave requests (own requests only -- another employee's pending request never appeared),
+  the latest own payslip (period and net pay), and the exact quick links; no other employee's data and no
+  gross-pay, deduction, payslip-snapshot, phone, leave-reason, or sensitive identity data appeared.
+- **Responsive/accessibility/browser/persistence**: desktop (1440x900), tablet (768x1024), mobile
+  (390x844), and 200% zoom passed with no whole-page horizontal overflow and tables scrolling only within
+  their own containers; keyboard access, visible focus, semantic headings, and text-based states passed;
+  Chrome and Firefox both passed; values persisted across refresh and across logout/login.
+- **Evidence classifications**: STATE-01 (independent loading states) is recorded as PASS through automated
+  coverage, since it was not directly observed manually. Independent partial-error behavior, safe raw-error
+  redaction, stale-response/unmount protection, deliberately inconsistent-data non-recomputation guards
+  (structurally automated-only for leave `remainingDays`, which the backend computes as entitled − used),
+  races, and timezone/business-date boundaries remain **AUTOMATED-COVERAGE-ONLY**. NETWORK request-shape
+  and security checks are **SOURCE/API/AUTOMATED-COVERAGE** (the committed API-module source and tests,
+  plus direct API verification during setup), not manual browser observation. Safari is unavailable on
+  this Windows environment and is recorded as **not applicable**, not failed.
+- **Quick Actions usability correction**: manual testing found Quick Actions usable but placed too low on
+  both dashboards (below the long data sections). They were moved immediately below each dashboard's
+  introduction by a pure JSX section move (added lines identical to removed lines) with no link, API,
+  state, security, or data-rendering change. Two DOM-order regression tests were added (Admin Quick
+  Actions before Active Employees; Employee Quick Actions before Today's Attendance), and the two existing
+  heading-order assertions were updated to the new order. RED: the two new order tests failed while the
+  other 55 dashboard tests passed. Focused GREEN: 57/57 dashboard tests; affected routing/layout group
+  (`App`, `AppLayout`): 77/77; full frontend suite (`npx vitest run --no-file-parallelism`): **29 test
+  files, 579 tests, 0 failures, 0 skipped**; `npm run build` succeeded. Committed separately as
+  `bf3a84c8ab2be9093e1bc9a0bf8bd7e0e1765772` ("Phase 11D maintenance: move dashboard quick actions"). The
+  final manual recheck passed in Chrome and Firefox across responsive sizes, 200% zoom, keyboard order,
+  and overflow.
+- **Fixtures and cleanup**: 19 temporary rows were created in one transaction -- 3 departments, 4
+  employees, 2 users, 1 attendance row, 3 leave balances, 4 leave requests, 1 payroll run, and 1 payslip;
+  existing leave types 1 and 2 were reused read-only. Cleanup deleted all 19 rows by exact recorded id in
+  a single FK-safe transaction, verified by exact `RETURNING` sets. No sequence was reset and no
+  pre-existing row was modified (verified by checksum). Core table counts returned exactly to the original
+  baseline: users 3, employees 2, departments 1, attendance 0, leave_types 2, leave_balances 1,
+  leave_requests 4, payroll_runs 0, payslips 0, salary_structures 0.
+- **Audit behavior**: seven expected `LOGIN_SUCCESS` audit rows (ids 6305–6311) were created by the
+  temporary-account logins; dashboard and report GET requests created no audit rows. All seven rows were
+  retained: no audit row was deleted or manually edited. When the temporary users were deleted, PostgreSQL
+  automatically set those rows' `actor_id` values to NULL through the existing `ON DELETE SET NULL`
+  foreign key; their `action`, `entity_name`, `entity_id`, `details`, and `created_at` remained unchanged.
+- **Service/process cleanup**: only the recorded Phase 11D backend and frontend processes were stopped
+  (each command line re-verified first); ports 8080, 5173, and 5174 were free afterwards; PostgreSQL and
+  unrelated containers/processes were untouched and remained healthy. The external ledger and its logs
+  were preserved outside the repository.
+- **Automated baselines**: backend tests were not rerun during Phase 11D; the last documented backend
+  baseline remains 571 tests, 0 failures, 0 errors, 3 pre-existing skips, with 13 Flyway migrations. The
+  final frontend verification (for the Quick Actions fix) is 579 tests across 29 files, 0 failures,
+  0 skipped, with a successful production build. Tests and builds were not rerun during cleanup or during
+  this documentation update.
+
+**Phase 11D: Complete.**
+
+**Phase 11: Complete.** All Phase 11 sub-phases are complete: 11A dashboard scope and readiness audit,
+11B HR Admin dashboard, 11C Employee dashboard, and 11D live manual verification, Quick Actions usability
+correction, fixture cleanup, and reconciliation.
+
 ## Phases 12–13
 Status: Not started.
