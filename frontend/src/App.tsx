@@ -14,6 +14,7 @@ import { PayrollRunListPage } from './routes/admin/PayrollRunListPage'
 import { ReportsPage } from './routes/admin/ReportsPage'
 import { SalaryHistoryPage as AdminSalaryHistoryPage } from './routes/admin/SalaryHistoryPage'
 import { AttendancePage } from './routes/employee/AttendancePage'
+import { EmployeeDashboardPage } from './routes/employee/EmployeeDashboardPage'
 import { EmployeeProfilePage } from './routes/employee/EmployeeProfilePage'
 import { LeaveDashboardPage } from './routes/employee/LeaveDashboardPage'
 import { PayslipDetailPage } from './routes/employee/PayslipDetailPage'
@@ -21,7 +22,6 @@ import { PayslipListPage } from './routes/employee/PayslipListPage'
 import { SalaryHistoryPage as EmployeeSalaryHistoryPage } from './routes/employee/SalaryHistoryPage'
 import { LoginPage } from './routes/LoginPage'
 import { NotFoundPage } from './routes/NotFoundPage'
-import { PlaceholderPage } from './routes/PlaceholderPage'
 
 function App() {
   return (
@@ -131,7 +131,7 @@ function App() {
           path="/employee"
           element={
             <ProtectedRoute allowedRoles={['EMPLOYEE']}>
-              <PlaceholderPage title="Employee Dashboard" description="Your personal overview." />
+              <EmployeeDashboardPage />
             </ProtectedRoute>
           }
         />

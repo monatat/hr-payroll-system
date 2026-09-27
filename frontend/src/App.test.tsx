@@ -75,6 +75,35 @@ describe('App', () => {
     expect(screen.getByRole('heading', { name: 'Employee Dashboard' })).toBeInTheDocument()
   })
 
+  it('redirects an unauthenticated visitor away from /employee to login', () => {
+    renderApp('/employee')
+
+    expect(screen.getByRole('heading', { name: 'Sign in' })).toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: 'Employee Dashboard' })).not.toBeInTheDocument()
+  })
+
+  it('blocks an authenticated HR_ADMIN from the /employee dashboard', () => {
+    sessionStorage.setItem('hr_payroll_access_token', fakeToken('HR_ADMIN'))
+
+    renderApp('/employee')
+
+    expect(screen.getByRole('heading', { name: 'Not authorized' })).toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: 'Employee Dashboard' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: "Today's Attendance" })).not.toBeInTheDocument()
+  })
+
+  it('allows an authenticated EMPLOYEE into the real /employee dashboard (not the old placeholder)', () => {
+    sessionStorage.setItem('hr_payroll_access_token', fakeToken('EMPLOYEE', 7))
+
+    renderApp('/employee')
+
+    expect(screen.getByRole('heading', { level: 1, name: 'Employee Dashboard' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { level: 2, name: "Today's Attendance" })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { level: 2, name: 'Latest Payslip' })).toBeInTheDocument()
+    expect(screen.queryByText('Your personal overview.')).not.toBeInTheDocument()
+    expect(screen.queryByText(/placeholder screen/i)).not.toBeInTheDocument()
+  })
+
   it('redirects an unauthenticated visitor away from /admin/departments to login', () => {
     renderApp('/admin/departments')
 
@@ -409,7 +438,9 @@ describe('App', () => {
       const user = userEvent.setup()
       renderApp('/employee')
 
-      await user.click(screen.getByRole('link', { name: 'My Leave' }))
+      // Scoped to the sidebar: the Employee Dashboard also has a "My Leave" quick action.
+      const sidebar = screen.getByRole('navigation', { name: 'Sidebar navigation' })
+      await user.click(within(sidebar).getByRole('link', { name: 'My Leave' }))
 
       expect(await screen.findByRole('heading', { name: 'My Leave' })).toBeInTheDocument()
     })

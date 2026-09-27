@@ -3189,5 +3189,79 @@ browser verification.
 is deferred and not started; **Phase 11D** (manual browser verification of both dashboards) is
 deferred and not started -- nothing in Phase 11B was exercised in a real browser.
 
+### Phase 11C — Employee dashboard
+
+**Status: Complete.**
+
+- **Scope**: frontend only. New `frontend/src/routes/employee/EmployeeDashboardPage.tsx` and its test
+  file; `App.tsx`'s `/employee` route element swapped from `PlaceholderPage` to `EmployeeDashboardPage`
+  inside the unchanged `ProtectedRoute allowedRoles={['EMPLOYEE']}` (the now-unused `PlaceholderPage`
+  import was removed; the `PlaceholderPage.tsx` component file itself was left in place, now unused);
+  `App.test.tsx` updated. No backend file, migration, dependency, lockfile, API-domain module,
+  formatter, sidebar item, or HR Admin dashboard file changed.
+- **Reused self-service endpoints and exact request shapes** (existing API functions, no new
+  dashboard wrapper). Every endpoint is EMPLOYEE-only and derives the employee solely from the
+  authenticated principal (`requireEmployeeId(principal)` on the backend); no function or request
+  carries an `employeeId`/`userId`/`actorId` or any caller-selected identity:
+  - **Today's Attendance** -- `getTodayAttendance()` -> `GET /api/employees/me/attendance/today`.
+    Renders the backend state as text ("Not clocked in today" / "Clocked in" / "Clocked out") with the
+    date and clock-in/clock-out times via the existing `formatAttendanceDate`/`formatAttendanceTime`
+    (a null clock-out renders the formatter's safe "—"); links to `/employee/attendance`. Strictly
+    read-only: no Clock In/Clock Out control, and today's state is never derived from attendance history.
+  - **Leave Balances** -- `getOwnLeaveBalances()` -> `GET /api/leave-balances/me`. Renders the rows
+    exactly in backend order (year, leave type, entitled, used, remaining, using the same one-decimal
+    display as `LeaveDashboardPage`); `remainingDays` is always the backend's value, never computed;
+    links to `/employee/leave`.
+  - **Recent Leave Requests** -- `listOwnLeaveRequests(0, 5)` -> `GET /api/leave-requests/me?page=0&size=5`.
+    Renders the returned content in backend order (leave type, date range, visible status badge); no
+    pending count or total is computed or shown (no authoritative count exists -- see Phase 11 scope);
+    reasons, reviewer data, and internal ids are not rendered; links to `/employee/leave`.
+  - **Latest Payslip** -- `listOwnPayslips(0, 1)` -> `GET /api/employees/me/payslips?page=0&size=1`
+    (newest first). Renders the period via `formatPayrollPeriod` and the backend `netPay` via
+    `formatMYR`; gross pay, deductions, and the payslip's name/code/department/job-title snapshots are
+    not shown, and no monetary value is computed; links to `/employee/payslips/{id}` without showing the
+    id as text.
+  - **My Profile** -- `getOwnProfile()` -> `GET /api/employees/me`. Shows only name, employee code,
+    department, job title, and hire date (via the timezone-safe `formatAttendanceDate`); phone number,
+    employment status, and internal ids are not rendered, and the audited `/sensitive` endpoint (IC/bank
+    data) is never called; links to `/employee/profile`.
+  - **Quick Actions** -- My Profile (`/employee/profile`), Attendance (`/employee/attendance`), My Leave
+    (`/employee/leave`), My Payslips (`/employee/payslips`), Salary History (`/employee/salary`).
+- **State**: five independent `useEffect`s (no `Promise.all`), each with its own loading message,
+  fixed safe `role="alert"` error ("Could not load today's attendance. Please try again.", "Could not
+  load leave balances. Please try again.", "Could not load recent leave requests. Please try again.",
+  "Could not load latest payslip. Please try again.", "Could not load profile. Please try again."),
+  and data state, using the project's closure-scoped `cancelled` flag. Visible empty states: "No leave
+  balances found.", "No leave requests yet.", "No payslips yet." No refresh button, form, text input,
+  chart, canvas/SVG, export/download, activity feed, or audit call.
+- **Accessibility/responsiveness**: one h1 "Employee Dashboard"; each section is a `<section>` labelled
+  by its h2 (Today's Attendance, Leave Balances, Recent Leave Requests, Latest Payslip, My Profile, Quick
+  Actions); values use definition lists; both tables have semantic headers and `sr-only` captions ("My
+  leave balances", "My recent leave requests") inside `relative overflow-x-auto` wrappers; attendance
+  state and leave status are text, never color alone.
+- **RED-first evidence**: the new `EmployeeDashboardPage.test.tsx` (30 tests) first failed with a
+  genuine Vite module-resolution error (the page did not exist). To obtain behavior-level RED, a
+  temporary stub rendering exactly the existing `/employee` placeholder (`PlaceholderPage` "Employee
+  Dashboard" / "Your personal overview.") was then run: 29 failed on genuinely missing behavior (API
+  functions never called, sections/tables/loading text not found), with no syntax, import, or mock
+  error; 1 passed vacuously (the "never sends an identity argument" guard, trivially true when no
+  request is made). The stub was then replaced by the real page. In `App.test.tsx`, 3 `/employee` route
+  tests were added: "EMPLOYEE reaches the real dashboard" failed RED (no "Today's Attendance" heading on
+  the placeholder); the logged-out redirect and HR_ADMIN-blocked tests already passed, since the route
+  guard pre-existed -- recorded accurately rather than claimed as RED.
+- **Existing test adjusted**: `App.test.tsx`'s "opens the leave dashboard from the sidebar My Leave
+  link" became ambiguous once the dashboard's own "My Leave" quick action existed; it is now scoped to
+  the `Sidebar navigation` landmark (same correction as Phase 11B). No production change was needed.
+- **Totals**: focused `EmployeeDashboardPage.test.tsx` -- 30/30; affected group (`EmployeeDashboardPage`,
+  `App`, `AppLayout` tests) -- 3 files, 107 tests, all passing; full frontend suite
+  (`npx vitest run --no-file-parallelism`) -- **29 test files, 577 tests, 0 failures, 0 skipped**
+  (previous baseline 544 tests across 28 files; the increase is exactly the 30 + 3 new tests and 1 new
+  file). `npm run build` succeeded. Backend untouched and not rerun (remains 571 tests, 0 failures,
+  0 errors, 3 skipped, 13 migrations).
+
+**Phase 11C: Complete.** Phase 11 remains **In progress** overall. **Phase 11D** (manual browser
+verification of both dashboards) is deferred and not started -- nothing in Phase 11C was exercised in a
+real browser.
+
 ## Phases 12–13
 Status: Not started.
