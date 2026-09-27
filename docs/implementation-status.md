@@ -3100,5 +3100,94 @@ tracked in an external cleanup ledger outside the repository, and fully removed 
 report-query foundation, secured HR_ADMIN reports service and API, frontend reports API/type
 foundation, HR Admin Reports page/route/sidebar, and focused manual browser verification.
 
-## Phases 11–13
+## Phase 11 — Dashboard implementation
+
+**Approved scope** (from the Phase 11A audit):
+- Replace the static HR Admin dashboard (`/admin`) and the placeholder Employee dashboard
+  (`/employee`) with real dashboards built **entirely on existing secured domain endpoints** -- no
+  backend change, no dedicated `/api/dashboard/*` endpoint, no migration, and no dependency.
+- Every count/total is the backend's authoritative value (a report total or a paged endpoint's
+  `page.totalElements`, which comes from the backend's own COUNT query); the frontend never counts,
+  sums, sorts, or filters rows.
+- Each dashboard section has its own request, loading/error/data state, and effect, so one failed
+  section never hides another; failures show a fixed safe message, never raw error detail.
+- Read-only dashboard GETs create no audit rows (the project convention: only mutations and the
+  `/sensitive` read are audited).
+- **Explicit exclusions**: no charts, forecasting, activity feed/audit-log reading, notifications,
+  calendars, exports/downloads, new persistent tables, or an Employee pending-leave *count* (the
+  self-service leave endpoint has no status filter, so no authoritative count exists without a new
+  backend capability).
+
+### Phase 11A — Dashboard scope and readiness audit
+
+**Status: Complete.** Read-only audit (no file, database, or process changed). Findings:
+`AdminDashboardPage` was a static stub (h1 + one sentence; its Phase 7 quick links had been removed)
+and `/employee` rendered the shared `PlaceholderPage`; both routes were already role-guarded
+(`HR_ADMIN` / `EMPLOYEE`) and both sidebars already had a `Dashboard` entry. Every proposed dashboard
+value except an Employee pending-leave count is served by an existing secured endpoint, so no backend
+work is required. Recommended sequence: 11B HR Admin dashboard, 11C Employee dashboard, 11D manual
+browser verification.
+
+### Phase 11B — HR Admin dashboard
+
+**Status: Complete.**
+
+- **Scope**: frontend only. `AdminDashboardPage.tsx` (static stub) replaced by the real dashboard;
+  new `AdminDashboardPage.test.tsx`; `App.test.tsx` updated. No backend file, migration, dependency,
+  lockfile, API-domain module, formatter, route, or sidebar item changed; the `/admin` route keeps its
+  unchanged `ProtectedRoute allowedRoles={['HR_ADMIN']}` wrapper; the Employee dashboard is untouched.
+- **Reused endpoints and exact request shapes** (existing API functions, no new dashboard wrapper):
+  - **Active Employees** -- `getHeadcountReport()` (no arguments) -> `GET /api/reports/headcount`
+    (class-level HR_ADMIN). Renders `totalActiveEmployees` as returned plus the department breakdown
+    in backend order; never sums the department rows.
+  - **Pending Leave Requests** -- `listLeaveRequests({ status: 'PENDING', page: 0, size: 1 })` ->
+    `GET /api/leave-requests?status=PENDING&page=0&size=1` (HR_ADMIN). Renders only
+    `page.totalElements`; the one over-fetched row is never stored or rendered (no employee name/code,
+    reason, leave type, or internal id). Links to `/admin/leave`.
+  - **Latest Payroll Run** -- `listPayrollRuns({ page: 0, size: 1 })` -> `GET /api/payroll-runs`
+    (HR_ADMIN), relying on the endpoint's established `createdAt DESC, id DESC` order (the same order
+    the Payroll Runs list shows), so it is the most recently created run. Renders the period via
+    `formatPayrollPeriod`, the status as a visible text badge (existing payroll badge convention), and
+    the created date via the existing timezone-safe `formatAttendanceDate` applied to the date part of
+    `createdAt`; links to `/admin/payroll/{id}` without showing the id as text. `failureReason` (which
+    can name an employee code), rate snapshots, and `version` are deliberately not rendered.
+  - **Quick Actions** -- links to `/admin/employees`, `/admin/leave`, `/admin/payroll`,
+    `/admin/reports` (no API).
+  - No request carries an `employeeId`/`userId`/`actorId`.
+- **State**: three independent `useEffect`s, each with its own loading message ("Loading active
+  employees..." etc.), fixed safe `role="alert"` error ("Could not load active employees. Please try
+  again.", "Could not load pending leave requests. Please try again.", "Could not load latest payroll
+  run. Please try again."), and data state, using the project's closure-scoped `cancelled` flag so a
+  late response after unmount never updates state. Visible empty states: "No active employees found."
+  (with the authoritative total still shown), "No leave requests are awaiting review.", "No payroll
+  runs yet." No refresh button, chart, canvas/SVG, export/download, or activity feed.
+- **Accessibility/responsiveness**: one h1 "Admin Dashboard"; each section is a `<section>` labelled
+  by its h2 (Active Employees, Pending Leave Requests, Latest Payroll Run, Quick Actions); values use
+  definition lists; the department table has an `sr-only` caption ("Active employees by department")
+  and sits in a `relative overflow-x-auto` wrapper (the Phase 10E containment lesson); statuses are
+  text, never color alone.
+- **RED-first evidence**: the new `AdminDashboardPage.test.tsx` (25 tests) ran against the static stub
+  first: 24 failed on genuinely missing behavior (API functions never called, section regions/table/
+  loading text not found), with no syntax, import, or mock error; 1 passed vacuously (the
+  "never sends an employeeId/userId/actorId" guard, trivially true when no request is made). In
+  `App.test.tsx`, 3 `/admin` route tests were added: "HR_ADMIN reaches the real dashboard" failed RED
+  (no "Active Employees" heading on the stub); the logged-out redirect and EMPLOYEE-blocked tests
+  already passed before the change, since the route guard pre-existed -- recorded accurately rather
+  than claimed as RED.
+- **Existing test adjusted**: `App.test.tsx`'s "opens the admin leave list from the sidebar Leave
+  Requests link" became ambiguous once the dashboard's own "Leave Requests" quick action existed
+  (two matching links on `/admin`); it is now scoped to the `Sidebar navigation` landmark, preserving
+  its stated intent. No production change was needed for this.
+- **Totals**: focused `AdminDashboardPage.test.tsx` -- 25/25; affected group (`AdminDashboardPage`,
+  `App`, `AppLayout` tests) -- 3 files, 99 tests, all passing; full frontend suite
+  (`npx vitest run --no-file-parallelism`) -- **28 test files, 544 tests, 0 failures, 0 skipped**
+  (previous baseline 516 tests across 27 files; the increase is exactly the 25 + 3 new tests and 1 new
+  file). `npm run build` succeeded. Backend untouched and not rerun (remains 571 tests, 0 failures,
+  0 errors, 3 skipped, 13 migrations).
+
+**Phase 11B: Complete.** Phase 11 remains **In progress** overall. **Phase 11C** (Employee dashboard)
+is deferred and not started; **Phase 11D** (manual browser verification of both dashboards) is
+deferred and not started -- nothing in Phase 11B was exercised in a real browser.
+
+## Phases 12–13
 Status: Not started.

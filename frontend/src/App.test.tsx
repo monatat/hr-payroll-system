@@ -272,6 +272,36 @@ describe('App', () => {
     expect(screen.queryByText(/placeholder screen/i)).not.toBeInTheDocument()
   })
 
+  it('redirects an unauthenticated visitor away from /admin to login', () => {
+    renderApp('/admin')
+
+    expect(screen.getByRole('heading', { name: 'Sign in' })).toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: 'Admin Dashboard' })).not.toBeInTheDocument()
+  })
+
+  it('blocks an authenticated EMPLOYEE from the /admin dashboard', () => {
+    sessionStorage.setItem('hr_payroll_access_token', fakeToken('EMPLOYEE', 7))
+
+    renderApp('/admin')
+
+    expect(screen.getByRole('heading', { name: 'Not authorized' })).toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: 'Admin Dashboard' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: 'Active Employees' })).not.toBeInTheDocument()
+  })
+
+  it('allows an authenticated HR_ADMIN into the real /admin dashboard (not the old static stub)', () => {
+    sessionStorage.setItem('hr_payroll_access_token', fakeToken('HR_ADMIN'))
+
+    renderApp('/admin')
+
+    expect(screen.getByRole('heading', { level: 1, name: 'Admin Dashboard' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { level: 2, name: 'Active Employees' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { level: 2, name: 'Pending Leave Requests' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { level: 2, name: 'Latest Payroll Run' })).toBeInTheDocument()
+    expect(screen.queryByText('HR Admin overview.')).not.toBeInTheDocument()
+    expect(screen.queryByText(/placeholder screen/i)).not.toBeInTheDocument()
+  })
+
   it('introduces no Employee-facing reports route', () => {
     sessionStorage.setItem('hr_payroll_access_token', fakeToken('EMPLOYEE', 7))
 
@@ -389,7 +419,9 @@ describe('App', () => {
       const user = userEvent.setup()
       renderApp('/admin')
 
-      await user.click(screen.getByRole('link', { name: 'Leave Requests' }))
+      // Scoped to the sidebar: the Admin Dashboard also has a "Leave Requests" quick action.
+      const sidebar = screen.getByRole('navigation', { name: 'Sidebar navigation' })
+      await user.click(within(sidebar).getByRole('link', { name: 'Leave Requests' }))
 
       expect(await screen.findByRole('heading', { name: 'Leave Requests' })).toBeInTheDocument()
     })
