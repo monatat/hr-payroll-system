@@ -3448,5 +3448,139 @@ Status: **Complete.**
 
 Phase 12 remains **In progress** overall.
 
+### Phase 12C — Opt-in local demo data
+
+Status: **Complete.**
+
+#### Phase 12C-1 — Scope and design approval
+
+- **Purpose**: provide an opt-in, recruiter-friendly local demo dataset so that both the HR Admin and the
+  Employee workflows can be demonstrated on a fresh database without direct SQL (closing the Phase 12A
+  fresh-clone provisioning gap).
+- **Activation** requires both the Spring profile `demo` and `DEMO_DATA_ENABLED=true`; demo data remains
+  disabled by default.
+- **Logins**: fixed emails `demo.admin@demo.local` (HR_ADMIN) and `demo.employee@demo.local` (EMPLOYEE).
+  Passwords must be supplied through `DEMO_ADMIN_PASSWORD` and `DEMO_EMPLOYEE_PASSWORD`, have no defaults,
+  require at least 12 characters, and are never logged or included in safe errors.
+- **Dataset rules**: readable reserved demo names/codes; the payroll run is CALCULATED; no attendance row,
+  no audit row, and no PDF is seeded or generated. No migration, new reporting table, dependency, or
+  frontend feature was required.
+- **Idempotency**: absent reserved dataset -> create once; complete valid reserved dataset -> skip without
+  rewriting; partial/conflicting reserved dataset -> fail safely and roll back.
+
+#### Phase 12C-2 — Demo-data implementation
+
+- **Commit**: `8af10c6b7b72fa8bacd5824cecbad332baff77fb` ("Phase 12C-2: add opt-in demo data profile") --
+  12 files (4 modified, 8 added), 1379 insertions, 2 deletions.
+  - Modified: `.env.example`, `backend/src/main/java/com/hrpayroll/backend/HrPayrollBackendApplication.java`,
+    `backend/src/main/java/com/hrpayroll/backend/leave/LeaveBalance.java`,
+    `backend/src/main/resources/application.yml`.
+  - Added production classes (`backend/src/main/java/com/hrpayroll/backend/demo/`):
+    `DemoDataConflictException.java`, `DemoDataProperties.java`, `DemoDataRunner.java`,
+    `DemoDataSeeder.java`, `DemoIdentities.java`.
+  - Added tests: `backend/src/test/java/com/hrpayroll/backend/demo/DemoDataRunnerTest.java`,
+    `backend/src/test/java/com/hrpayroll/backend/demo/DemoDataSeederTest.java`,
+    `backend/src/test/java/com/hrpayroll/backend/leave/LeaveBalanceTest.java`.
+  - No frontend, README, migration, dependency, or lockfile change.
+- **Design**:
+  - `DemoDataRunner` is guarded by the `demo` profile and `app.demo.enabled=true`, and runs on
+    `ApplicationReadyEvent`, after the normal application runners (including the bootstrap-admin runner).
+  - `DemoDataProperties` validates that both passwords are present and at least 12 characters.
+  - `DemoDataSeeder` checks the reserved identities before writing, then creates the complete dataset in one
+    transaction. A complete valid dataset is a no-op; partial/conflicting reserved data raises
+    `DemoDataConflictException` with a fixed safe message and rolls back.
+  - Passwords are BCrypt-hashed through the application's `PasswordEncoder` and never logged. The existing
+    Annual Leave and Sick Leave types are reused by name. A validated public `LeaveBalance` constructor was
+    added. Payroll values are produced through the real `PayrollCalculator` path.
+  - No controller, endpoint, audit-writing behavior, attendance seed, or PDF-writing behavior was added.
+- **Dataset** (15 rows): 2 departments (Demo Engineering, Demo Finance); 2 ACTIVE employees (DEMO-001 Demo
+  Employee One, DEMO-002 Demo Employee Two); 2 users (the EMPLOYEE user linked to DEMO-001); 2 salary
+  structures; 2 leave balances (DEMO-001: Annual 14 entitled / 2 used, Sick 14 / 0); 2 leave requests
+  (DEMO-001: one APPROVED 2-day and one PENDING 3-day Annual request); 1 previous-month CALCULATED payroll
+  run; 2 PENDING payslips with NULL PDF paths.
+  - Payslip values: employee 1 gross 4750.00, deductions 793.25, net 3956.75; employee 2 gross 5900.00,
+    deductions 985.30, net 4914.70; total gross 10650.00.
+- **RED/GREEN**: RED was a genuine compile-time failure caused only by the missing demo production types
+  and the missing validated `LeaveBalance` constructor. Focused tests 41/41; broader affected group 71/71;
+  full backend suite **612 tests, 0 failures, 0 errors, 3 pre-existing skips**, 13 Flyway migrations
+  (previous baseline 571; the increase is exactly the 41 new tests). The frontend was unchanged and not
+  rerun; its latest baseline remains 582 tests across 29 files, 0 failures, 0 skipped, with a successful
+  production build.
+- **Shared development-database qualification**: the full backend `clean verify` appended 176 audit rows
+  through pre-existing non-demo integration tests. None matched the demo identities and none came from demo
+  seeding; business-table data and audit rows through id 6315 remained unchanged. This is the project's
+  existing shared-integration-test-database behavior, not a Phase 12C demo-seeding defect. The development
+  database as a whole is not claimed to be byte-for-byte unchanged after the test suite.
+
+#### Phase 12C-3 — Isolated live smoke verification
+
+- **Isolation**: the live test used a completely separate, disposable PostgreSQL environment -- container
+  `hr_payroll_demo_smoke_20260928`, named volume `hr_payroll_demo_smoke_20260928_data`, database
+  `hr_payroll_demo_smoke`, a dedicated database user, loopback port 5435 -- with separate logs, secret files,
+  PDF directory, and cleanup ledger outside the repository. The development database was neither queried
+  nor reused (nor its volume), and the Foode and blockchain resources were not touched. The backend ran on
+  8080 (log-verified JDBC URL `jdbc:postgresql://localhost:5435/hr_payroll_demo_smoke`) and the frontend on
+  5174 with strict port binding.
+- **First startup**: all 13 Flyway migrations applied to the empty smoke database; exactly 15 demo rows were
+  created; 0 attendance rows and 0 audit rows before login; the exact monetary values and totals matched;
+  both payslips were PENDING with NULL PDF paths; no PDF file was created. The backend logs contained no
+  password, hash, JWT, stack trace, ERROR, or WARN line.
+- **Restart/idempotency**: the backend was stopped and restarted against the same smoke database; the log
+  reported the dataset already present with nothing created or changed. All row ids, password-hash
+  checksums, relevant timestamps, and the dataset checksum (`3075152e0f90fe1ba4e5d1210a80c0bd`) were
+  unchanged; no audit, attendance, PDF, password rehash, or business-row rewrite occurred.
+- **API verification**: health UP; CORS allowed `http://localhost:5174` and rejected
+  `http://localhost:5173`; unauthenticated protected requests returned 401; both demo logins succeeded; all
+  tested cross-role requests returned 403; the Admin and Employee read-only endpoints returned the expected
+  values; employee attendance returned `NOT_CLOCKED_IN`. The self-service payslip endpoint used was the
+  committed `/api/employees/me/payslips`. No mutation endpoint other than login was called.
+  - Optional-status qualification: Admin leave "all statuses" is expressed by omitting the optional
+    `status` parameter; `status=ALL` returns 400 because `ALL` is not an enum value. The verifier corrected
+    this by omitting the parameter. This is expected API behavior, not a defect.
+- **Manual browser results** (user-reported, all PASS):
+  - **Authorization**: logged-out Admin and Employee route protection; HR Admin blocked from Employee pages;
+    Employee blocked from Admin pages; no cross-role data leakage.
+  - **HR Admin**: dashboard active total 2, Demo Engineering 1, Demo Finance 1, pending leave total 1, latest
+    payroll run August 2026 CALCULATED; both demo employees rendered; pending and approved leave requests
+    rendered correctly; payroll list/detail showed both exact payslips; PDFs remained unavailable; Reports
+    annual and August totals were RM 10,650.00 (on the Reports page, not the dashboard); missing months were
+    not synthesized; headcount values were correct; no employee-level Reports data appeared.
+  - **Employee**: DEMO-001 profile rendered correctly; attendance showed "Not clocked in today"; Annual
+    balance 14 entitled / 2 used / 12 remaining; Sick balance 14 / 0 / 14; approved and pending requests
+    rendered correctly; the August 2026 payslip showed RM 3,956.75 net pay; only the linked employee's data
+    appeared; DEMO-002 salary/identity did not leak; the PDF remained unavailable.
+  - **Persistence, responsive, accessibility, browsers**: results survived refresh and logout/login; Chrome
+    and Firefox passed; Safari is unavailable on this Windows environment and is recorded as **not
+    applicable**, not failed; 1440x900, 768x1024, 390x844, and 200% zoom passed with no whole-page
+    horizontal overflow and tables scrolling inside their containers; keyboard access, visible focus,
+    semantic headings/tables, and text-conveyed states passed.
+- **Evidence classification**: the browser behavior above was manually observed and reported by the user.
+  Database creation, exact values, non-rewriting, and idempotency were verified directly against the smoke
+  database. Raw backend-error injection/redaction, concurrency races, and failure injection were not manually
+  exercised and remain automated coverage.
+- **Audit behavior**: the smoke database held six audit rows (ids 1-6), all `LOGIN_SUCCESS`: ids 1-3 from
+  setup/API verification and ids 4-6 from manual browser logins. Their details contained only the
+  corresponding login email. No domain-mutation audit row existed, and dashboard/report/list/detail GETs
+  created no audit rows. These ids belonged only to the disposable smoke database and ceased to exist when
+  its volume was removed; they are not development-database audit rows.
+- **Cleanup**:
+  - The backend and frontend processes were stopped by verified task/PID identity. Recorded process-chain
+    qualification: Node PID 38372 was the frontend `npx` wrapper (omitted from the originally recorded
+    chain) and exited naturally with the frontend task.
+  - After exact identity re-verification, only the smoke container and then only the smoke volume were
+    removed. No broad prune, network removal, image removal, or cleanup SQL occurred.
+  - The transient database-password and demo-password files, the handoff file, and the secret-generation
+    script were deleted. The external ledger and logs were preserved, and the external payroll-PDF directory
+    remained empty.
+  - Ports 8080, 5174, and 5435 were free afterwards. The development and unrelated containers/volumes
+    remained healthy with unchanged identities, and the repository remained clean.
+- **Automated baselines**: tests and builds were not rerun during Phase 12C-3, cleanup, or this
+  documentation update. Backend remains 612 tests, 0 failures, 0 errors, 3 pre-existing skips, 13
+  migrations; frontend remains 582 tests across 29 files, 0 failures, 0 skipped, with a successful build.
+
+**Phase 12C: Complete.**
+
+**Phase 12 remains In progress overall.** Phase 12D README/setup documentation has not started.
+
 ## Phase 13
 Status: Not started.
