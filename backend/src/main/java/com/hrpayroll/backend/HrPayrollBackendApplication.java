@@ -1,6 +1,7 @@
 package com.hrpayroll.backend;
 
 import com.hrpayroll.backend.auth.BootstrapAdminProperties;
+import com.hrpayroll.backend.demo.DemoDataProperties;
 import com.hrpayroll.backend.security.jwt.JwtProperties;
 import java.util.TimeZone;
 import org.springframework.boot.SpringApplication;
@@ -14,7 +15,7 @@ import org.springframework.boot.context.properties.EnableConfigurationProperties
 // ever used, so the default auto-configured one (and its noisy generated
 // startup password) would otherwise be dead weight.
 @SpringBootApplication(exclude = UserDetailsServiceAutoConfiguration.class)
-@EnableConfigurationProperties({JwtProperties.class, BootstrapAdminProperties.class})
+@EnableConfigurationProperties({JwtProperties.class, BootstrapAdminProperties.class, DemoDataProperties.class})
 public class HrPayrollBackendApplication {
 
     public static void main(String[] args) {

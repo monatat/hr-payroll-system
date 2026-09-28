@@ -16,7 +16,8 @@ import java.time.LocalDateTime;
 /**
  * Maps the existing V6 {@code leave_balances} table. Balances are managed
  * manually in v1 (no create/update API in Phase 7) -- rows are provisioned
- * directly (psql, or test fixtures). {@code usedDays} is only ever mutated
+ * directly (psql, test fixtures, or the validated constructor below, used by
+ * the opt-in local demo-data profile). {@code usedDays} is only ever mutated
  * through {@link #incrementUsedDays}, called by
  * {@code LeaveRequestService.approve} after it has already verified
  * sufficiency under the balance row's pessimistic lock -- there is no
@@ -56,6 +57,38 @@ public class LeaveBalance {
 
     protected LeaveBalance() {
         // for JPA
+    }
+
+    /**
+     * Creates a new balance in a schema-valid, semantically valid state. The schema itself has no
+     * CHECK constraints for these invariants, so they are enforced here: both references required,
+     * a year within the project's established 2000-2100 range, and non-negative day values with used
+     * never above entitled. (Approval-time sufficiency remains {@code LeaveRequestService}'s job.)
+     */
+    public LeaveBalance(Employee employee, LeaveType leaveType, int year, BigDecimal entitledDays, BigDecimal usedDays) {
+        if (employee == null) {
+            throw new IllegalArgumentException("employee must not be null");
+        }
+        if (leaveType == null) {
+            throw new IllegalArgumentException("leaveType must not be null");
+        }
+        if (year < 2000 || year > 2100) {
+            throw new IllegalArgumentException("year must be between 2000 and 2100");
+        }
+        if (entitledDays == null || usedDays == null) {
+            throw new IllegalArgumentException("entitledDays and usedDays must not be null");
+        }
+        if (entitledDays.signum() < 0 || usedDays.signum() < 0) {
+            throw new IllegalArgumentException("entitledDays and usedDays must not be negative");
+        }
+        if (usedDays.compareTo(entitledDays) > 0) {
+            throw new IllegalArgumentException("usedDays must not exceed entitledDays");
+        }
+        this.employee = employee;
+        this.leaveType = leaveType;
+        this.year = year;
+        this.entitledDays = entitledDays;
+        this.usedDays = usedDays;
     }
 
     public void incrementUsedDays(BigDecimal amount) {

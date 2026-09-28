@@ -58,6 +58,13 @@ app:
     # Both unset by default -> bootstrap is skipped. See .env.example.
     email: ${BOOTSTRAP_ADMIN_EMAIL:}
     password: ${BOOTSTRAP_ADMIN_PASSWORD:}
+  demo:
+    # Opt-in LOCAL demo data (Phase 12C). Seeds only when the `demo` Spring profile is active AND
+    # DEMO_DATA_ENABLED=true. Passwords have no default and must be supplied (12+ characters).
+    # Never enable this in production. See .env.example.
+    enabled: ${DEMO_DATA_ENABLED:false}
+    admin-password: ${DEMO_ADMIN_PASSWORD:}
+    employee-password: ${DEMO_EMPLOYEE_PASSWORD:}
   cors:
     allowed-origin: ${CORS_ALLOWED_ORIGIN:http://localhost:5173}
   payroll:
