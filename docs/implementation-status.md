@@ -3582,5 +3582,50 @@ Status: **Complete.**
 
 **Phase 12 remains In progress overall.** Phase 12D README/setup documentation has not started.
 
+### Phase 12D — Recruiter-facing README and fresh-clone setup
+
+Status: **Complete.**
+
+- **Scope**: `README.md` was rewritten from the stale Phase 5-focused document into a practical recruiter
+  and fresh-clone guide. The HR Admin and Employee feature lists now reflect the completed application;
+  technology versions and dependencies were reconciled with the committed files; the Node.js minimum was
+  corrected from 18+ to 22.12+; the nonexistent `docs/decisions/` reference and the stale
+  placeholder-navigation and current-Phase-5 claims were removed.
+- **Two setup paths**: demo mode and normal development mode are documented separately. Demo mode is the
+  preferred recruiter path and requires the Spring profile `demo`, `DEMO_DATA_ENABLED=true`, user-chosen
+  demo passwords, and a fresh database. The fixed demo emails are documented; no fixed password is included.
+- **Fresh-clone blocker corrected**: the README now explains that Docker Compose and Vite may read the root
+  `.env`, but Spring Boot does not load it automatically; backend configuration is supplied through
+  PowerShell `$env:` variables in the session that starts the backend.
+- **Secret handling**: the committed JWT placeholder is explicitly not recommended for use; the README
+  generates a fresh JWT secret in the PowerShell session; demo and bootstrap passwords use masked
+  `Read-Host -AsSecureString` input, with the temporary secure variables removed after conversion; optional
+  clearing of the session's sensitive environment variables is documented.
+- **Operations**: exact normal/demo start, health-check, frontend, stop, and reset commands are documented;
+  destructive database and PDF cleanup commands are clearly labeled; PDF storage and database persistence
+  behavior are documented.
+- **Testing guidance**: backend tests are documented as running against the configured PostgreSQL database
+  and potentially writing test/audit data; readers are warned to use a disposable or non-important database
+  and not to run tests while demo mode is active. `npm test` is the standard frontend command, with
+  `npx vitest run --no-file-parallelism` as the lower-concurrency alternative.
+- **Limitations and security**: the README states there is no CSV/report export while preserving the
+  implemented payslip PDF generation/download, and documents the security notes and the local-only,
+  non-production limitations. It links to `docs/implementation-status.md` rather than duplicating the phase
+  history.
+- **Unchanged**: `.env.example` was deliberately left unchanged. No source, test, Compose, configuration,
+  migration, dependency, or lockfile changed.
+- **Verification**: documentation-only; tests and builds were not rerun, and no manual browser test was
+  required because Phase 12C-3 had already verified the running application. The README's commands,
+  environment variables, routes, scripts, dependencies, demo identities, and links were checked read-only
+  against the committed files.
+- **Retained baselines**: backend 612 tests, 0 failures, 0 errors, 3 pre-existing skips, 13 Flyway
+  migrations; frontend 582 tests across 29 files, 0 failures, 0 skipped, with a successful build.
+
+**Phase 12D: Complete.**
+
+**Phase 12: Complete.** Phase 12A through 12D are complete: readiness audit, responsive containment
+correction and real-page verification, opt-in demo provisioning and isolated smoke verification, and
+recruiter-facing setup documentation.
+
 ## Phase 13
 Status: Not started.
